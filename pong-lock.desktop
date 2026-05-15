@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Pong Lock
+GenericName=Screen Lock
+Comment=Ambient Pong screen lock with PAM authentication
+Exec=python3 /home/oobn/code/pong-lock/pong_lock.py
+Icon=/home/oobn/.local/share/icons/hicolor/scalable/apps/pong-lock.svg
+Terminal=false
+Categories=System;Utility;
+Keywords=lock;screen;pong;security;pam;
+StartupNotify=true
