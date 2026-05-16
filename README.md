@@ -1,4 +1,4 @@
-# pong-lock
+# pong
 
 Ambient Pong screen lock for Ubuntu/X11. Two AI paddles auto-play on a black background while a password prompt sits in the middle. Authenticates against your real login password via PAM. Multi-monitor mirror.
 
@@ -26,7 +26,7 @@ Top of `pong_lock.py`:
 
 - `MAX_ATTEMPTS` — wrong passwords before cooloff (default 3)
 - `COOLOFF_SECONDS` — lockout duration (default 15 min)
-- `PAM_SERVICE` — `"login"` by default; switch to `"passwd"` or a custom `/etc/pam.d/pong-lock` if `login` denies on your system
+- `PAM_SERVICE` — `"login"` by default; switch to `"passwd"` or a custom `/etc/pam.d/pong` if `login` denies on your system
 - `INPUT_TIMEOUT` — cancel the password prompt after this many idle seconds
 - `MAX_PASSWORD_LEN` — input buffer cap
 - Ball / paddle physics constants
