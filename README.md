@@ -45,6 +45,7 @@ Top of `pong_lock.py`:
 - `PAM_SERVICE` — `"login"` by default; switch to `"passwd"` or a custom `/etc/pam.d/pong` if `login` denies on your system
 - `INPUT_TIMEOUT` — cancel the password prompt after this many idle seconds
 - `MAX_PASSWORD_LEN` — input buffer cap
+- `CLOCK_FONT_SIZE` / `CLOCK_COLOR` / `CLOCK_24H` — central clock appearance and 12/24-hour mode
 - Ball / paddle physics constants
 
 Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launches.

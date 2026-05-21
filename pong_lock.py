@@ -30,6 +30,9 @@ BALL_SPEED_X = 7.0
 BALL_SPEED_Y = 4.2
 PADDLE_SPEED = 5.5
 MAX_PASSWORD_LEN = 256
+CLOCK_FONT_SIZE = 260           # central clock height in logical px
+CLOCK_COLOR = (150, 150, 150)   # dim grey — sits behind the paddles/ball
+CLOCK_24H = True                # False for 12-hour time
 
 STATE_FILE = os.path.expanduser("~/.cache/pong_lock_state")
 
@@ -155,6 +158,11 @@ def main():
     surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
     font = pygame.font.SysFont("monospace", 56)
     small = pygame.font.SysFont("monospace", 32)
+    # Chunky typewriter face for the central clock; falls back if absent.
+    clock_font = pygame.font.SysFont("courier 10 pitch,courier,dejavu sans mono",
+                                     CLOCK_FONT_SIZE, bold=True)
+    clock_str = ""
+    clock_surf = None
 
     bx, by = LOGICAL_W / 2, LOGICAL_H / 2
     bvx, bvy = BALL_SPEED_X, BALL_SPEED_Y
@@ -246,6 +254,15 @@ def main():
         surf.fill((0, 0, 0))
         for y in range(0, LOGICAL_H, 24):
             pygame.draw.rect(surf, (40, 40, 40), (LOGICAL_W // 2 - 2, y, 4, 12))
+
+        # Central clock — re-rendered only when the displayed time changes.
+        cur_clock = time.strftime("%H:%M" if CLOCK_24H else "%I:%M").lstrip("0")
+        if cur_clock != clock_str:
+            clock_str = cur_clock
+            clock_surf = clock_font.render(clock_str, True, CLOCK_COLOR)
+        surf.blit(clock_surf, (LOGICAL_W // 2 - clock_surf.get_width() // 2,
+                               LOGICAL_H // 2 - clock_surf.get_height() // 2))
+
         pygame.draw.rect(surf, (220, 220, 220),
                          (PADDLE_MARGIN, int(pl - PADDLE_H / 2), PADDLE_W, PADDLE_H))
         pygame.draw.rect(surf, (220, 220, 220),
