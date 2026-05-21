@@ -12,13 +12,29 @@ sudo apt install python3-pygame python3-pam
 
 The PAM binding comes from the Debian `python3-pam` package (module name `PAM`, capital letters) — not the PyPI `python-pam` library, which is a different thing.
 
+Then install the launcher:
+
+```
+make install PREFIX=$HOME/.local
+```
+
+This puts a `pong` command in `~/.local/bin`, plus a `.desktop` entry and icon. Use `sudo make install` for a system-wide install under `/usr/local`.
+
 ## Run
+
+Run the installed command:
+
+```
+pong
+```
+
+Or run directly from the repo without installing:
 
 ```
 python3 pong_lock.py
 ```
 
-Bind to a GNOME custom shortcut (e.g. `Ctrl+Alt+P`) for one-key activation.
+Bind to a GNOME custom shortcut (e.g. `Ctrl+Alt+P`) for one-key activation. Point the shortcut command at the installed `pong` command (use the full path, e.g. `~/.local/bin/pong`) rather than a repo path — that way the shortcut keeps working if the repo is moved or renamed.
 
 ## Tunables
 
