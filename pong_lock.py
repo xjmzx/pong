@@ -31,6 +31,7 @@ BALL_SPEED_Y = 4.2
 PADDLE_SPEED = 5.5
 MAX_PASSWORD_LEN = 256
 CLOCK_FONT_SIZE = 260           # central clock height in logical px
+DAY_FONT_SIZE = 96              # day-of-week label above the clock
 CLOCK_COLOR = (150, 150, 150)   # dim grey — sits behind the paddles/ball
 CLOCK_24H = True                # False for 12-hour time
 
@@ -161,8 +162,12 @@ def main():
     # Chunky typewriter face for the central clock; falls back if absent.
     clock_font = pygame.font.SysFont("courier 10 pitch,courier,dejavu sans mono",
                                      CLOCK_FONT_SIZE, bold=True)
+    day_font = pygame.font.SysFont("courier 10 pitch,courier,dejavu sans mono",
+                                   DAY_FONT_SIZE, bold=True)
     clock_str = ""
     clock_surf = None
+    day_str = ""
+    day_surf = None
 
     bx, by = LOGICAL_W / 2, LOGICAL_H / 2
     bvx, bvy = BALL_SPEED_X, BALL_SPEED_Y
@@ -260,8 +265,15 @@ def main():
         if cur_clock != clock_str:
             clock_str = cur_clock
             clock_surf = clock_font.render(clock_str, True, CLOCK_COLOR)
-        surf.blit(clock_surf, (LOGICAL_W // 2 - clock_surf.get_width() // 2,
-                               LOGICAL_H // 2 - clock_surf.get_height() // 2))
+        cur_day = time.strftime("%A").upper()
+        if cur_day != day_str:
+            day_str = cur_day
+            day_surf = day_font.render(day_str, True, CLOCK_COLOR)
+        clock_x = LOGICAL_W // 2 - clock_surf.get_width() // 2
+        clock_y = LOGICAL_H // 2 - clock_surf.get_height() // 2
+        surf.blit(day_surf, (LOGICAL_W // 2 - day_surf.get_width() // 2,
+                             clock_y - day_surf.get_height() + 8))
+        surf.blit(clock_surf, (clock_x, clock_y))
 
         pygame.draw.rect(surf, (220, 220, 220),
                          (PADDLE_MARGIN, int(pl - PADDLE_H / 2), PADDLE_W, PADDLE_H))
