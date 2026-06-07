@@ -6,7 +6,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 
 import pygame
 from pygame._sdl2.video import Renderer, Texture, Window
@@ -32,8 +35,12 @@ PADDLE_SPEED = 5.5
 MAX_PASSWORD_LEN = 256
 CLOCK_FONT_SIZE = 260           # central clock height in logical px
 DAY_FONT_SIZE = 96              # day-of-week label above the clock
+WEATHER_FONT_SIZE = 72          # temperature chip below the clock
 CLOCK_COLOR = (150, 150, 150)   # dim grey — sits behind the paddles/ball
 CLOCK_24H = True                # False for 12-hour time
+WEATHER_LOCATION = "Hanoi"      # wttr.in location string; "" for IP-based
+WEATHER_REFRESH_SEC = 1800      # 30 min between fetches
+WEATHER_TIMEOUT_SEC = 6         # fetch timeout
 
 STATE_FILE = os.path.expanduser("~/.cache/pong_lock_state")
 
@@ -99,6 +106,30 @@ def fmt_time(sec):
     return f"{sec // 60}:{sec % 60:02d}"
 
 
+_weather = {"text": ""}
+
+
+def _fetch_weather_once():
+    url = f"https://wttr.in/{WEATHER_LOCATION}?format=%t"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "pong-lock"})
+        with urllib.request.urlopen(req, timeout=WEATHER_TIMEOUT_SEC) as resp:
+            body = resp.read().decode("utf-8", "replace").strip()
+        if body and not body.lower().startswith("unknown"):
+            _weather["text"] = body.replace("+", "")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
+
+
+def start_weather_thread():
+    def loop():
+        while True:
+            _fetch_weather_once()
+            time.sleep(WEATHER_REFRESH_SEC)
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+
+
 def authenticate(password):
     user = getpass.getuser()
 
@@ -152,6 +183,7 @@ def main():
     pygame.init()
     pygame.font.init()
     pygame.mouse.set_visible(False)
+    start_weather_thread()
 
     win, ren, tex, dst_rects = make_window(rects)
     pygame.event.set_grab(True)
@@ -164,10 +196,14 @@ def main():
                                      CLOCK_FONT_SIZE, bold=True)
     day_font = pygame.font.SysFont("courier 10 pitch,courier,dejavu sans mono",
                                    DAY_FONT_SIZE, bold=True)
+    weather_font = pygame.font.SysFont("courier 10 pitch,courier,dejavu sans mono",
+                                       WEATHER_FONT_SIZE, bold=True)
     clock_str = ""
     clock_surf = None
     day_str = ""
     day_surf = None
+    weather_str = ""
+    weather_surf = None
 
     bx, by = LOGICAL_W / 2, LOGICAL_H / 2
     bvx, bvy = BALL_SPEED_X, BALL_SPEED_Y
@@ -261,7 +297,7 @@ def main():
             pygame.draw.rect(surf, (40, 40, 40), (LOGICAL_W // 2 - 2, y, 4, 12))
 
         # Central clock — re-rendered only when the displayed time changes.
-        cur_clock = time.strftime("%H:%M" if CLOCK_24H else "%I:%M").lstrip("0")
+        cur_clock = time.strftime("%H:%M" if CLOCK_24H else "%-I:%M")
         if cur_clock != clock_str:
             clock_str = cur_clock
             clock_surf = clock_font.render(clock_str, True, CLOCK_COLOR)
@@ -269,11 +305,20 @@ def main():
         if cur_day != day_str:
             day_str = cur_day
             day_surf = day_font.render(day_str, True, CLOCK_COLOR)
+        cur_weather = _weather["text"]
+        if cur_weather != weather_str:
+            weather_str = cur_weather
+            weather_surf = (weather_font.render(weather_str, True, CLOCK_COLOR)
+                            if weather_str else None)
         clock_x = LOGICAL_W // 2 - clock_surf.get_width() // 2
         clock_y = LOGICAL_H // 2 - clock_surf.get_height() // 2
         surf.blit(day_surf, (LOGICAL_W // 2 - day_surf.get_width() // 2,
                              clock_y - day_surf.get_height() + 8))
         surf.blit(clock_surf, (clock_x, clock_y))
+        if weather_surf is not None:
+            surf.blit(weather_surf,
+                      (LOGICAL_W // 2 - weather_surf.get_width() // 2,
+                       clock_y + clock_surf.get_height() - 8))
 
         pygame.draw.rect(surf, (220, 220, 220),
                          (PADDLE_MARGIN, int(pl - PADDLE_H / 2), PADDLE_W, PADDLE_H))
