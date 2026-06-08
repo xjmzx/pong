@@ -574,13 +574,36 @@ def main():
     source_surf = ui_font.render("wttr.in", True, P["MAUVE"])
     event_header_surf = ui_font.render("NEXT", True, P["MAUVE"])
     # Design profile readout — theme + three signature hexes (accent /
-    # mauve / auburn) so the active palette is legible on-screen.
+    # mauve / auburn) each preceded by a tiny filled circle in that tone,
+    # so the chip visually anchors the hex it labels.
     hex_rgb = lambda rgb: "#{:02X}{:02X}{:02X}".format(*rgb)
-    design_str = " · ".join((theme_name.upper(),
-                             hex_rgb(P["ACCENT"]),
-                             hex_rgb(P["MAUVE"]),
-                             hex_rgb(P["AUBURN"])))
-    design_surf = ui_font.render(design_str, True, P["MAUVE"])
+    CHIP_SIZE = 8
+    CHIP_TEXT_GAP = 4
+    name_surf = ui_font.render(theme_name.upper(), True, P["MAUVE"])
+    sep_surf = ui_font.render(" · ", True, P["MAUVE"])
+    swatches = [(P["ACCENT"], P["MAUVE"], P["AUBURN"])[i]
+                for i in range(3)]
+    hex_surfs = [ui_font.render(hex_rgb(c), True, P["MAUVE"])
+                 for c in swatches]
+    design_h = max(name_surf.get_height(), CHIP_SIZE,
+                   *(s.get_height() for s in hex_surfs))
+    design_w = (name_surf.get_width()
+                + sum(sep_surf.get_width() + CHIP_SIZE + CHIP_TEXT_GAP
+                      + s.get_width() for s in hex_surfs))
+    design_surf = pygame.Surface((design_w, design_h), pygame.SRCALPHA)
+    text_y = (design_h - name_surf.get_height()) // 2
+    chip_cy = design_h // 2
+    x = 0
+    design_surf.blit(name_surf, (x, text_y))
+    x += name_surf.get_width()
+    for chip_color, hex_surf in zip(swatches, hex_surfs):
+        design_surf.blit(sep_surf, (x, text_y))
+        x += sep_surf.get_width()
+        pygame.draw.circle(design_surf, chip_color,
+                           (x + CHIP_SIZE // 2, chip_cy), CHIP_SIZE // 2)
+        x += CHIP_SIZE + CHIP_TEXT_GAP
+        design_surf.blit(hex_surf, (x, text_y))
+        x += hex_surf.get_width()
     # Pre-render the keyboard hint pieces. Bottom-row only: Ctrl Alt SPACE Alt Ctrl.
     kb_label_font = pygame.font.SysFont(SANS_STACK, KB_LABEL_FONT_SIZE,
                                         bold=True)
