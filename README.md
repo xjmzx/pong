@@ -6,26 +6,43 @@ This is a deterrent-level lock — somewhere between leaving the desktop unlocke
 
 ## Install
 
-One-shot dependency setup (apt + pip):
+Two paths: a `.deb` package (cleanest for Ubuntu/Debian), or a source install via the Makefile (for dev or non-deb systems).
+
+### As a .deb package
+
+Build the package once, then `apt install` it like any other system package:
+
+```
+make deb
+sudo apt install ./dist/pong_0.2.0_all.deb
+```
+
+The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `wireless-tools` and `python3-recurring-ical-events` are `Recommends` — the lock degrades gracefully without them (no SSID readout / no calendar chips).
+
+To uninstall:
+
+```
+sudo apt remove pong
+```
+
+To bump the version for a release: edit `VERSION` at the top of the Makefile, or override per-build:
+
+```
+make deb VERSION=0.3.0
+```
+
+### From source
+
+User-space install (`~/.local`):
 
 ```
 make deps
-```
-
-This installs:
-- `python3-pam`, `python3-pygame` — base runtime
-- `python3-icalendar` (apt) — ICS parser, optional but needed for the calendar chips
-- `recurring-ical-events` (pip --user) — RRULE expansion for the calendar chips
-
-The PAM binding comes from the Debian `python3-pam` package (module name `PAM`, capital letters) — not the PyPI `python-pam` library, which is a different thing.
-
-Then install the launcher:
-
-```
 make install PREFIX=$HOME/.local
 ```
 
-This puts a `pong` command in `~/.local/bin`, plus a `.desktop` entry and icon. Use `sudo make install` for a system-wide install under `/usr/local`.
+`make deps` installs `python3-pam`, `python3-pygame`, `python3-icalendar` via apt and `recurring-ical-events` via pip --user. Then `make install` places the launcher at `$PREFIX/bin/pong` plus the `.desktop` entry and icon. Use `sudo make install` (no `PREFIX`) for a system-wide install under `/usr/local`.
+
+The PAM binding comes from the Debian `python3-pam` package (module name `PAM`, capital letters) — not the PyPI `python-pam` library, which is a different thing.
 
 ## Run
 
@@ -131,15 +148,15 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 
 ## Portability across Linux devices
 
-All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/calendars.json`. To set up on a fresh Linux box:
+All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/` (which holds `calendars.json` and `theme.json`). To set up on a fresh Linux box:
 
 1. `git clone` the repo (or copy the source)
-2. `make deps && make install PREFIX=$HOME/.local`
-3. Bind `~/.local/bin/pong` to a keyboard shortcut in your DE's settings
-4. Launch pong once to auto-create the empty `calendars.json` template
+2. `make deb && sudo apt install ./dist/pong_0.2.0_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
+3. Bind `pong` to a keyboard shortcut in your DE's settings (use the full path `/usr/bin/pong` for the .deb install, `~/.local/bin/pong` for the source install)
+4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours
 
-That's it. No system-level configuration; everything runs in user-space.
+Per-machine state (`~/.cache/pong_lock_*`) is not portable; per-user config (`~/.config/pong/*`) is.
 
 ## Limitations
 
