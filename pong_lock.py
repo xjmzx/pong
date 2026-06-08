@@ -7,7 +7,6 @@ import getpass
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
 import threading
@@ -85,7 +84,6 @@ P = {}  # populated by main() via build_palette(_resolve_theme())
 WEATHER_LOCATION = "Hanoi"      # wttr.in location string; "" for IP-based
 WEATHER_REFRESH_SEC = 1800      # 30 min between fetches
 WEATHER_TIMEOUT_SEC = 6         # fetch timeout
-NET_REFRESH_SEC = 10            # network connectivity poll interval
 EVENT_LABEL_MAX = 14            # truncate event labels to this many chars
 CALENDAR_CONFIG = os.path.expanduser("~/.config/pong/calendars.json")
 CALENDAR_REFRESH_SEC = 600      # 10 min between ICS fetches
@@ -327,7 +325,6 @@ def draw_grid(surf):
 
 
 _weather = {"text": "", "sun": (), "moon": ""}
-_net = {"online": False, "ssid": ""}
 
 
 def _fetch_weather_once():
@@ -354,44 +351,6 @@ def start_weather_thread():
         while True:
             _fetch_weather_once()
             time.sleep(WEATHER_REFRESH_SEC)
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
-
-
-def _check_online():
-    try:
-        with socket.create_connection(("1.1.1.1", 53), timeout=2):
-            return True
-    except OSError:
-        return False
-
-
-def _read_ssid():
-    for cmd in (["iwgetid", "-r"], ["nmcli", "-t", "-f", "active,ssid",
-                                    "dev", "wifi"]):
-        try:
-            out = subprocess.check_output(cmd, text=True,
-                                          stderr=subprocess.DEVNULL,
-                                          timeout=2).strip()
-        except (FileNotFoundError, subprocess.CalledProcessError,
-                subprocess.TimeoutExpired):
-            continue
-        if cmd[0] == "iwgetid":
-            if out:
-                return out
-        else:
-            for line in out.splitlines():
-                if line.startswith("yes:"):
-                    return line[4:]
-    return ""
-
-
-def start_net_thread():
-    def loop():
-        while True:
-            _net["online"] = _check_online()
-            _net["ssid"] = _read_ssid() if _net["online"] else ""
-            time.sleep(NET_REFRESH_SEC)
     t = threading.Thread(target=loop, daemon=True)
     t.start()
 
@@ -583,7 +542,6 @@ def main():
     pygame.font.init()
     pygame.mouse.set_visible(False)
     start_weather_thread()
-    start_net_thread()
     _ensure_calendar_config()
     start_calendar_thread()
     user_host = f"{getpass.getuser()}@{os.uname().nodename}"
@@ -645,8 +603,6 @@ def main():
     dayline_surf = None
     weather_key = ("", ())
     weather_surf = None
-    net_key = (None, None)
-    net_surf = None
     host_surf = ui_font.render(user_host, True, P["MAUVE"])
     # Paddles + ball: clock-tone at ~50% alpha so they sit one visual
     # step back from the focal clock. SRCALPHA surfaces because the main
@@ -818,13 +774,6 @@ def main():
                     y_off += p.get_height() + gap
             else:
                 weather_surf = None
-        cur_net = (_net["online"], _net["ssid"])
-        if cur_net != net_key:
-            net_key = cur_net
-            label = "online" if cur_net[0] else "offline"
-            if cur_net[1]:
-                label = f"{label} · {cur_net[1]}"
-            net_surf = ui_font.render(label, True, P["MAUVE"])
 
         # Cell-centred blit helper.
         def blit_cell(s, col, row, colspan=1, rowspan=1):
@@ -847,24 +796,14 @@ def main():
             surf.blit(weather_surf,
                       (col0_text_x, cy - weather_surf.get_height() // 2))
 
-        # Identity + connection chip at (0,3) — three lines top-to-bottom:
-        # dot + net label, user@host, design profile (theme + key hexes).
+        # Identity + design chip at (0,3) — two lines: user@host above
+        # the design profile (theme + key hexes).
         nc_y = cell_center(0, 3)[1]
-        dot_r = 6
-        gap = 10
         row_gap = 6
-        chip_h = (net_surf.get_height() + row_gap
-                  + host_surf.get_height() + row_gap
-                  + design_surf.get_height())
-        net_y = nc_y - chip_h // 2
-        host_y = net_y + net_surf.get_height() + row_gap
+        chip_h = host_surf.get_height() + row_gap + design_surf.get_height()
+        host_y = nc_y - chip_h // 2
         design_y = host_y + host_surf.get_height() + row_gap
         left_x = col0_text_x
-        dot_x = left_x + dot_r
-        dot_cy = net_y + net_surf.get_height() // 2
-        pygame.draw.circle(surf, P["OK"] if net_key[0] else P["ALERT"],
-                           (dot_x, dot_cy), dot_r)
-        surf.blit(net_surf, (dot_x + dot_r + gap, net_y))
         surf.blit(host_surf, (left_x, host_y))
         surf.blit(design_surf, (left_x, design_y))
 

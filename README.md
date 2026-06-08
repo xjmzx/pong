@@ -1,6 +1,6 @@
 # pong
 
-Ambient Pong screen lock for Ubuntu/X11. Two AI paddles auto-play across a 4×4 dashboard of clock, day, date, weather, network, and Google Calendar readouts. Authenticates against your real login password via PAM. Multi-monitor mirror.
+Ambient Pong screen lock for Ubuntu/X11. Two AI paddles auto-play across a 4×4 dashboard of clock, day, date, weather, sunrise/sunset, and Google Calendar readouts. Authenticates against your real login password via PAM. Dual fizx/upleb theme that alternates on each launch. Multi-monitor mirror.
 
 This is a deterrent-level lock — somewhere between leaving the desktop unlocked and a hardened session lock. VT-switch and SSH still work; that is intentional.
 
@@ -17,7 +17,7 @@ make deb
 sudo apt install ./dist/pong_0.2.0_all.deb
 ```
 
-The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `wireless-tools` and `python3-recurring-ical-events` are `Recommends` — the lock degrades gracefully without them (no SSID readout / no calendar chips).
+The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
 
 To uninstall:
 
@@ -68,24 +68,39 @@ The input times out after 8 seconds of inactivity — an auburn progress underli
 
 ## Dashboard
 
-The screen is divided into a 4×4 grid with the clock in the centre 2×2:
+The screen is divided into a 4×4 grid with the clock in the centre 2×2 and the data chips stacked in the left column:
 
 ```
-┌─user@host─┬──── DAY · DATE ────┬─● online·SSID─┐
-│           │                    │               │
-│           │                    │               │
-│           │       CLOCK        │               │
-│           │      (2×2 cell)    │               │
-│           │                    │               │
-│           │                    │               │
-├─CAL[0]────┼────TEMP────┬────SUN────┼─CAL[1]────┤
-│ JOG       │   37°C     │ ↑05:14    │   TT      │
-│ NEXT      │            │ ↓18:36    │   NEXT    │
-│ Wed 18:30 │            │           │   ...     │
-└───────────┴────────────┴───────────┴───────────┘
+┌─JOG────┬──── MON 08 JUN ────┬─empty──┐
+│ NEXT   │                    │        │
+│ Wed... │                    │        │
+├─TT─────┤                    ├────────┤
+│ NEXT   │       CLOCK        │        │
+│ Tue... │      (2×2 cell)    │ empty  │
+├─37°C───┤                    ├────────┤
+│ HANOI  │                    │        │
+│ 05:14  │                    │        │
+│ 18:36  │                    │        │
+│ wttr.in│                    │        │
+├─host───┼──── input strip ───┼────────┤
+│ design │   (SPACE / pwd)    │        │
+└────────┴────────────────────┴────────┘
 ```
 
-Top row: `user@host`, weekday + date, network status (with WiFi SSID if available). Bottom row: two Google Calendar slots, current temperature, sunrise/sunset. Calendar cells render with their Google-side colour as the frame outline + name text.
+**Left column (top → bottom):**
+- (0,0) Jog (cal[0]) — calendar name + NEXT event, pistachio tint backdrop
+- (0,1) TT (cal[1]) — calendar name + NEXT event, mango tint backdrop
+- (0,2) Weather composite — temp, city, sunrise, sunset, source (wttr.in)
+- (0,3) Identity — `user@host` plus a design profile line (`FIZX · #ACCENT · #MAUVE · #AUBURN`)
+
+**Centre column:**
+- (1–2, 0) DAY DATE — unified mono-bold line, e.g. `MON 08 JUN`
+- (1–2, 1–2) CLOCK 2×2 — focal time digit
+- (1–2, 3) Input strip — SPACE wake-hint, password prompt, warning bar, feedback
+
+**Right column:** intentionally empty — reserved for future ambient data.
+
+Calendar cells render with their Google-side colour as both a 15%-alpha backdrop and the name text. The design profile line shows which theme is active and the three signature hexes (accent, mauve, auburn) that vary across themes.
 
 ## Configuration
 
@@ -102,7 +117,7 @@ An empty template is written automatically on first launch (`chmod 600`). Edit i
 }
 ```
 
-Up to two calendars are surfaced — first entry → bottom-left cell, second → bottom-right. Both are visible at all times (their name always shows); when there's an upcoming event within 7 days, a `NEXT / time / summary` stack appears below the name.
+Up to two calendars are surfaced — first entry → cell (0,0), second → cell (0,1) (top of the left column). Both are visible at all times (their name always shows); when there's an upcoming event within 7 days, a `NEXT / time / summary` stack appears below the name.
 
 **Getting the URL:** In Google Calendar (web), click the calendar in the left sidebar → **Settings and sharing** → scroll to **Integrate calendar** → copy **Secret address in iCal format**. Treat it as a password — anyone with the URL can read all events.
 
@@ -128,15 +143,18 @@ Auth + input:
 - `MAX_PASSWORD_LEN` — input buffer cap
 
 Layout + typography:
-- `CLOCK_FONT_SIZE`, `DAY_FONT_SIZE`, `DATE_FONT_SIZE`, `WEATHER_FONT_SIZE`, `SUN_FONT_SIZE`, `DASH_FONT_SIZE` — per-element font sizes
+- `CLOCK_FONT_SIZE` — centre clock (default 260, mono bold)
+- `DAYLINE_FONT_SIZE` — "MON 08 JUN" line above the clock (default 120, mono bold)
+- `UI_FONT_SIZE` — unified Ubuntu size for every perimeter chip (default 14, regular)
 - `CLOCK_24H` — `True` for 24-hour clock, `False` for 12-hour
-- `SANS_STACK` / `MONO_STACK` (in `main()`) — typeface fallback chain
-- `PAL_*` constants — ndisc-suite fizx colour palette
+- `SANS_STACK` / `MONO_STACK` / `UBUNTU_STACK` (in `main()`) — typeface fallback chains
+- `PAL_NET`, `PAL_GRID_MAIN`, `PAL_GRID_SUB`, `PAL_KB_DIM` — theme-invariant structural tones
+- `THEMES["fizx"|"upleb"]` — the two palette dicts mirroring `ndisc.smpl/src/index.css`
 - `HL_INSET`, `HL_RADIUS`, `HL_WIDTH` — group-highlight frame geometry
 - `SUB_GRID_DIV` — sub-grid density (default 4 → 16×16 graph paper)
 
-Network + calendar polling:
-- `NET_REFRESH_SEC` — connectivity check cadence (default 10s)
+Polling cadence:
+- `WEATHER_REFRESH_SEC` — wttr.in fetch cadence (default 30 min)
 - `CALENDAR_REFRESH_SEC` — ICS fetch cadence (default 10 min)
 - `CALENDAR_LOOKAHEAD_DAYS` — only surface events within this window
 

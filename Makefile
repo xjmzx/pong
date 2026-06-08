@@ -28,8 +28,7 @@ deps:
 	@echo "Installing pong runtime deps..."
 	sudo apt install -y python3-pam python3-pygame python3-icalendar
 	pip install --user --break-system-packages recurring-ical-events
-	@echo "Done. Optional: install iwgetid (wireless-tools) for SSID readout:"
-	@echo "  sudo apt install wireless-tools"
+	@echo "Done."
 
 deb:
 	rm -rf $(PKG_DIR)
@@ -42,7 +41,7 @@ deb:
 	  "Priority: optional" \
 	  "Architecture: all" \
 	  "Depends: python3 (>= 3.8), python3-pam, python3-pygame, python3-icalendar" \
-	  "Recommends: wireless-tools, python3-recurring-ical-events" \
+	  "Recommends: python3-recurring-ical-events" \
 	  "Maintainer: $(MAINTAINER)" \
 	  "Homepage: https://github.com/xjmzx/pong" \
 	  "Description: Ambient Pong screen lock for Ubuntu/X11" \
