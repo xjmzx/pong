@@ -4,6 +4,8 @@ Ambient Pong screen lock for Ubuntu/X11. Two AI paddles auto-play across a 4×4 
 
 This is a deterrent-level lock — somewhere between leaving the desktop unlocked and a hardened session lock. VT-switch and SSH still work; that is intentional.
 
+The same binary doubles as a standalone dashboard: `pong --dashboard` renders the dashboard in a regular resizable window with no lock, no keyboard grab, and no PAM dependency. See [Dashboard mode](#dashboard-mode).
+
 ## Install
 
 Two paths: a `.deb` package (cleanest for Ubuntu/Debian), or a source install via the Makefile (for dev or non-deb systems).
@@ -14,7 +16,7 @@ Build the package once, then `apt install` it like any other system package:
 
 ```
 make deb
-sudo apt install ./dist/pong_0.2.0_all.deb
+sudo apt install ./dist/pong_0.3.0_all.deb
 ```
 
 The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
@@ -28,7 +30,7 @@ sudo apt remove pong
 To bump the version for a release: edit `VERSION` at the top of the Makefile, or override per-build:
 
 ```
-make deb VERSION=0.3.0
+make deb VERSION=0.3.1
 ```
 
 ### From source
@@ -59,6 +61,18 @@ python3 pong_lock.py
 ```
 
 Bind to a GNOME custom shortcut (e.g. `Ctrl+Alt+P`) for one-key activation. Point the shortcut command at the installed `pong` command (use the full path, e.g. `~/.local/bin/pong`) rather than a repo path — that way the shortcut keeps working if the repo is moved or renamed.
+
+## Dashboard mode
+
+Pass `--dashboard` to run the same dashboard as an ordinary windowed app — useful when you just want to glance at the clock, calendar chips, and weather without locking the screen:
+
+```
+pong --dashboard
+```
+
+The `.deb` install also ships a separate "Pong Dashboard" entry in *Show Applications*, so the dashboard can be launched from the app grid like any other app. The window is resizable (640×360 minimum), has a normal title bar, and quits on **Esc**, **Q**, or close. PAM is not used and `python3-pam` is not required for this mode. A separate single-instance lock at `~/.cache/pong_dash.lock` means a dashboard window can coexist with the lock variant if you ever want both running.
+
+The bottom-row input strip is rendered as an empty reserved tile in dashboard mode (no SPACE wake hint, no password prompt). Everything else — clock, day/date, calendars, weather, identity chip — renders exactly as in lock mode, including the dual fizx/upleb theme alternation.
 
 ## Unlock
 

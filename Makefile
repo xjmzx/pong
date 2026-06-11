@@ -4,7 +4,7 @@ PREFIX = /usr/local
 # Debian packaging — `make deb` stages the install tree under build/
 # and emits dist/pong_$(VERSION)_all.deb. Override MAINTAINER if you
 # fork.
-VERSION = 0.2.0
+VERSION = 0.3.0
 MAINTAINER = xjmzx <jabbanawanga@gmail.com>
 PKG_NAME = pong_$(VERSION)_all
 PKG_DIR = build/$(PKG_NAME)
@@ -17,11 +17,13 @@ all: help
 install:
 	install -D -m755 -- pong_lock.py "$(DESTDIR)$(PREFIX)/bin/pong"
 	install -D -m644 -- pong.desktop "$(DESTDIR)$(PREFIX)/share/applications/pong.desktop"
+	install -D -m644 -- pong-dash.desktop "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	install -D -m644 -- icon.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
 
 uninstall:
 	rm -f -- "$(DESTDIR)$(PREFIX)/bin/pong"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/applications/pong.desktop"
+	rm -f -- "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
 
 deps:
@@ -44,11 +46,14 @@ deb:
 	  "Recommends: python3-recurring-ical-events" \
 	  "Maintainer: $(MAINTAINER)" \
 	  "Homepage: https://github.com/xjmzx/pong" \
-	  "Description: Ambient Pong screen lock for Ubuntu/X11" \
+	  "Description: Ambient Pong screen lock + dashboard for Ubuntu/X11" \
 	  " Two AI paddles auto-play across a 4x4 ambient dashboard of clock," \
-	  " day, date, weather, network, and Google Calendar readouts." \
+	  " day, date, weather, sunrise/sunset, and Google Calendar readouts." \
 	  " Authenticates against the real login password via PAM. Mirrors" \
 	  " across multiple monitors." \
+	  " ." \
+	  " Run \`pong --dashboard\` to view the same dashboard in a regular" \
+	  " resizable window with no lock and no PAM dependency." \
 	  " ." \
 	  " Deterrent-level lock: VT-switch and SSH still work." \
 	  > $(PKG_DIR)/DEBIAN/control

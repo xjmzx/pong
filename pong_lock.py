@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Ambient Pong screen lock for Ubuntu/X11. Mirrors across all connected displays."""
+"""Ambient Pong dashboard for Ubuntu/X11.
+
+Two modes share one binary:
+- `pong` (default): full-screen lock that mirrors across every connected
+  monitor and authenticates against the real login password via PAM.
+- `pong --dashboard`: same dashboard rendered in a resizable, regular
+  window. No PAM, no keyboard grab, single monitor. Close the window or
+  press Esc/Q to quit.
+"""
 
 import datetime as _dt
 import fcntl
@@ -21,8 +29,7 @@ from pygame._sdl2.video import Renderer, Texture, Window
 try:
     import PAM
 except ImportError:
-    sys.stderr.write("Missing dep: install with `sudo apt install python3-pam`\n")
-    sys.exit(1)
+    PAM = None  # only required in lock mode; checked once mode is resolved
 
 # --- Tunables ---
 MAX_ATTEMPTS = 3
@@ -44,6 +51,11 @@ DAYLINE_FONT_SIZE = 120         # "MON 08 JUN" — one mono-bold line under cloc
 # labels) renders through a single ui_font at one size + regular weight,
 # Ubuntu-first stack. Centre cluster (CLOCK/DAY/DATE) keeps its own fonts.
 UI_FONT_SIZE = 14
+# Dashboard mode renders the same logical surface scaled into a windowed
+# canvas, so the perimeter chips read smaller than they do on a full
+# 1920×1080 lock screen. Bump just the windowed mode to compensate; lock
+# mode keeps its calibrated 14pt.
+DASH_UI_FONT_SIZE = 16
 # SPACE wake-hint, rendered as a mini-keyboard bottom row.
 KB_KEY_H = 32                   # height of all hint keys
 KB_MOD_W = 38                   # width of Ctrl/Alt keys
@@ -116,6 +128,11 @@ PADDLE_CLEAR = PADDLE_MARGIN + PADDLE_W + PADDLE_GAP
 
 STATE_FILE = os.path.expanduser("~/.cache/pong_lock_state")
 LOCK_FILE = os.path.expanduser("~/.cache/pong_lock.lock")
+DASH_LOCK_FILE = os.path.expanduser("~/.cache/pong_dash.lock")
+
+# Dashboard-mode window defaults.
+DASH_WIN_W, DASH_WIN_H = 1280, 720
+DASH_WIN_MIN = (640, 360)
 
 
 def _fade(rgb, f):
@@ -181,10 +198,11 @@ def build_palette(name):
     }
 
 
-def acquire_single_instance():
-    """Refuse to launch a second pong over the first. Lock released on exit."""
-    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
-    fp = open(LOCK_FILE, "w")
+def acquire_single_instance(lock_path=LOCK_FILE):
+    """Refuse to launch a second instance over the first. Lock-mode and
+    dashboard-mode each take a distinct lock path so they can coexist."""
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    fp = open(lock_path, "w")
     try:
         fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -532,22 +550,49 @@ def make_window(rects):
 
 
 def main():
-    _lock_fp = acquire_single_instance()  # noqa: F841 (kept open for flock)
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print("Usage: pong [--dashboard]")
+        print("  (no args)     full-screen lock + ambient pong (PAM auth)")
+        print("  --dashboard   view the dashboard in a resizable window")
+        return 0
+    dashboard_mode = "--dashboard" in args or "--dash" in args
+
+    if not dashboard_mode and PAM is None:
+        sys.stderr.write(
+            "Missing dep: install with `sudo apt install python3-pam`\n")
+        return 1
+
+    _lock_fp = acquire_single_instance(  # noqa: F841 (kept open for flock)
+        DASH_LOCK_FILE if dashboard_mode else LOCK_FILE)
     _ensure_theme_config()
     theme_name = _resolve_theme()
     P.update(build_palette(theme_name))
-    rects = get_displays() or [(0, 0, 1920, 1080)]
 
     pygame.init()
     pygame.font.init()
-    pygame.mouse.set_visible(False)
     start_weather_thread()
     _ensure_calendar_config()
     start_calendar_thread()
     user_host = f"{getpass.getuser()}@{os.uname().nodename}"
 
-    win, ren, tex, dst_rects = make_window(rects)
-    pygame.event.set_grab(True)
+    win = ren = tex = None
+    dst_rects = None
+    screen = None
+    if dashboard_mode:
+        pygame.mouse.set_visible(True)
+        screen = pygame.display.set_mode(
+            (DASH_WIN_W, DASH_WIN_H), pygame.RESIZABLE)
+        pygame.display.set_caption("Pong Dashboard")
+        try:
+            Window.from_display_module().minimum_size = DASH_WIN_MIN
+        except Exception:
+            pass
+    else:
+        pygame.mouse.set_visible(False)
+        rects = get_displays() or [(0, 0, 1920, 1080)]
+        win, ren, tex, dst_rects = make_window(rects)
+        pygame.event.set_grab(True)
 
     surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
     font = pygame.font.SysFont("monospace", 56)
@@ -565,7 +610,9 @@ def main():
     UBUNTU_STACK = "ubuntu,helvetica,arial,nimbus sans,liberation sans"
     clock_font = pygame.font.SysFont(MONO_STACK, CLOCK_FONT_SIZE, bold=True)
     dayline_font = pygame.font.SysFont(MONO_STACK, DAYLINE_FONT_SIZE, bold=True)
-    ui_font = pygame.font.SysFont(UBUNTU_STACK, UI_FONT_SIZE)
+    ui_font = pygame.font.SysFont(
+        UBUNTU_STACK,
+        DASH_UI_FONT_SIZE if dashboard_mode else UI_FONT_SIZE)
     # Static attribution labels — city for the temp tile, service for the
     # sun tile. Pre-rendered once since neither value changes at runtime.
     city_surf = (ui_font.render(WEATHER_LOCATION.upper(), True,
@@ -651,6 +698,17 @@ def main():
     while running:
         now = time.time()
         for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                running = False
+                continue
+            if dashboard_mode:
+                if ev.type == pygame.VIDEORESIZE:
+                    screen = pygame.display.set_mode(
+                        ev.size, pygame.RESIZABLE)
+                elif ev.type == pygame.KEYDOWN and ev.key in (
+                        pygame.K_ESCAPE, pygame.K_q):
+                    running = False
+                continue
             if ev.type != pygame.KEYDOWN:
                 continue
             if is_locked_out():
@@ -877,50 +935,65 @@ def main():
 
         # Input strip lives in its own 2×1 tile below the clock; everything
         # related (asterisks, warning bar, kb hint, feedback) centres on it.
-        input_cx, input_cy = cell_center(1, 3, colspan=2)
-        if typing:
-            t = font.render("*" * len(typed) + "_", True, P["MAUVE"])
-            input_y = input_cy - t.get_height() // 2
-            surf.blit(t, (input_cx - t.get_width() // 2, input_y))
-            # Progress underline — only appears in the last INPUT_WARN_SEC
-            # seconds, shrinking to 0 as the timeout approaches. Auburn.
-            remaining = max(0.0, typing_until - now)
-            if remaining <= INPUT_WARN_SEC:
-                bar_x = input_cx - INPUT_BAR_WIDTH // 2
-                bar_y = input_y + t.get_height() + 6
-                pygame.draw.rect(surf, P["AUBURN"],
-                                 (bar_x, bar_y,
-                                  int(INPUT_BAR_WIDTH * (remaining / INPUT_WARN_SEC)),
-                                  INPUT_BAR_HEIGHT))
-        else:
-            # Mini-keyboard hint — Ctrl Alt SPACE Alt Ctrl, SPACE highlighted.
-            kx = input_cx - kb_total_w // 2
-            ky = input_cy - KB_KEY_H // 2
-            for w, label_surf, color in kb_keys:
-                pygame.draw.rect(surf, color, (kx, ky, w, KB_KEY_H),
-                                 width=1, border_radius=KB_RADIUS)
-                if label_surf is not None:
-                    surf.blit(label_surf,
-                              (kx + (w - label_surf.get_width()) // 2,
-                               ky + (KB_KEY_H - label_surf.get_height()) // 2))
-                kx += w + KB_GAP
-        if feedback and now < feedback_until:
-            t = small.render(feedback, True, P["ALERT"])
-            # Anchor to tile centre; stack above the input when both shown.
-            fb_y = input_cy - t.get_height() // 2
+        # In dashboard mode the tile renders as a reserved empty slot — the
+        # background fill + outline already drew above.
+        if not dashboard_mode:
+            input_cx, input_cy = cell_center(1, 3, colspan=2)
             if typing:
-                fb_y -= font.get_height() + 6
-            surf.blit(t, (input_cx - t.get_width() // 2, fb_y))
+                t = font.render("*" * len(typed) + "_", True, P["MAUVE"])
+                input_y = input_cy - t.get_height() // 2
+                surf.blit(t, (input_cx - t.get_width() // 2, input_y))
+                # Progress underline — only appears in the last INPUT_WARN_SEC
+                # seconds, shrinking to 0 as the timeout approaches. Auburn.
+                remaining = max(0.0, typing_until - now)
+                if remaining <= INPUT_WARN_SEC:
+                    bar_x = input_cx - INPUT_BAR_WIDTH // 2
+                    bar_y = input_y + t.get_height() + 6
+                    pygame.draw.rect(surf, P["AUBURN"],
+                                     (bar_x, bar_y,
+                                      int(INPUT_BAR_WIDTH * (remaining / INPUT_WARN_SEC)),
+                                      INPUT_BAR_HEIGHT))
+            else:
+                # Mini-keyboard hint — Ctrl Alt SPACE Alt Ctrl, SPACE highlighted.
+                kx = input_cx - kb_total_w // 2
+                ky = input_cy - KB_KEY_H // 2
+                for w, label_surf, color in kb_keys:
+                    pygame.draw.rect(surf, color, (kx, ky, w, KB_KEY_H),
+                                     width=1, border_radius=KB_RADIUS)
+                    if label_surf is not None:
+                        surf.blit(label_surf,
+                                  (kx + (w - label_surf.get_width()) // 2,
+                                   ky + (KB_KEY_H - label_surf.get_height()) // 2))
+                    kx += w + KB_GAP
+            if feedback and now < feedback_until:
+                t = small.render(feedback, True, P["ALERT"])
+                # Anchor to tile centre; stack above the input when both shown.
+                fb_y = input_cy - t.get_height() // 2
+                if typing:
+                    fb_y -= font.get_height() + 6
+                surf.blit(t, (input_cx - t.get_width() // 2, fb_y))
 
-        tex.update(surf)
-        ren.clear()
-        for dst in dst_rects:
-            tex.draw(dstrect=dst)
-        ren.present()
+        if dashboard_mode:
+            sw, sh = screen.get_size()
+            scale = min(sw / LOGICAL_W, sh / LOGICAL_H)
+            scaled_w = max(1, int(LOGICAL_W * scale))
+            scaled_h = max(1, int(LOGICAL_H * scale))
+            scaled = pygame.transform.smoothscale(surf, (scaled_w, scaled_h))
+            screen.fill(P["BG"])
+            screen.blit(scaled,
+                        ((sw - scaled_w) // 2, (sh - scaled_h) // 2))
+            pygame.display.flip()
+        else:
+            tex.update(surf)
+            ren.clear()
+            for dst in dst_rects:
+                tex.draw(dstrect=dst)
+            ren.present()
 
         clock.tick(60)
 
-    pygame.event.set_grab(False)
+    if not dashboard_mode:
+        pygame.event.set_grab(False)
     pygame.mouse.set_visible(True)
     pygame.quit()
 

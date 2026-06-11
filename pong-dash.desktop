@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Pong Dashboard
+GenericName=Ambient Dashboard
+Comment=Clock, calendar, and weather dashboard with ambient pong (no lock)
+Exec=pong --dashboard
+Icon=pong
+Terminal=false
+Categories=Utility;Clock;
+Keywords=dashboard;clock;calendar;weather;pong;
+StartupNotify=true
