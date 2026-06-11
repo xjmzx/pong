@@ -31,15 +31,27 @@ try:
 except ImportError:
     PAM = None  # only required in lock mode; checked once mode is resolved
 
+# Calendar parse deps are optional (`python3-icalendar` is a hard dep on
+# the .deb; `recurring-ical-events` is `Recommends`). Import at module
+# load so the background calendar thread never races with the main
+# thread's SDL event pump — lazy imports from a thread while pygame is
+# pumping events can segfault SDL on some Mutter/X11 builds.
+try:
+    import icalendar
+    import recurring_ical_events
+    HAS_ICS = True
+except ImportError:
+    HAS_ICS = False
+
 # --- Tunables ---
 MAX_ATTEMPTS = 3
 COOLOFF_SECONDS = 15 * 60
 PAM_SERVICE = "login"          # change to "passwd" or a custom service if PAM denies
 INPUT_TIMEOUT = 8              # cancel password prompt if idle this long
 LOGICAL_W, LOGICAL_H = 1920, 1080
-PADDLE_W, PADDLE_H = 40, 120    # paddle width bumped to ~clock-font stroke weight
+PADDLE_W, PADDLE_H = 48, 144    # paddle bumped slightly (was 40×120)
 PADDLE_MARGIN = 60
-BALL_SIZE = 40                  # ball matched to paddle weight (square, mint, ~50% alpha)
+BALL_SIZE = 48                  # ball matched to paddle weight (was 40)
 PONG_ALPHA = 128                # ~50% alpha on paddles + ball (clock-tone, recessive)
 BALL_SPEED_X = 7.0
 BALL_SPEED_Y = 4.2
@@ -51,11 +63,64 @@ DAYLINE_FONT_SIZE = 120         # "MON 08 JUN" — one mono-bold line under cloc
 # labels) renders through a single ui_font at one size + regular weight,
 # Ubuntu-first stack. Centre cluster (CLOCK/DAY/DATE) keeps its own fonts.
 UI_FONT_SIZE = 14
-# Dashboard mode renders the same logical surface scaled into a windowed
-# canvas, so the perimeter chips read smaller than they do on a full
-# 1920×1080 lock screen. Bump just the windowed mode to compensate; lock
-# mode keeps its calibrated 14pt.
-DASH_UI_FONT_SIZE = 16
+# --- Dashboard / lock divergences (track here) ---
+# As the dashboard variant evolves it will intentionally drift from the
+# lock screen. Every delta lives behind a `dashboard_mode` gate; keep
+# this list in sync as new deltas land so the two modes stay legible.
+#
+#   * UI font     — DASH_UI_FONT_SIZE = 24  (lock: UI_FONT_SIZE = 14)
+#   * Grid        — 5×4 (GRID_COLS_DASH) instead of lock's 4×4. CELL_W
+#                   shrinks to LOGICAL_W//5 = 384 so the perimeter is
+#                   14 uniform chip slots wrapping a 3×2 clock centred
+#                   at col 2. Lock keeps its 2×2 clock + 12 perimeter
+#                   slots, with col 3 intentionally empty
+#   * DAY DATE    — large mono-bold focal line in lock
+#                   (DAYLINE_FONT_SIZE = 120) at the merged (1-2, 0)
+#                   span. In dashboard mode the text shrinks to
+#                   DASH_UI_FONT_SIZE and is folded into the weather
+#                   composite at (0, 2) as the first line of the stack.
+#                   The original (2, 0) DATE slot is currently a free
+#                   tile awaiting reassignment.
+#   * Clock span  — 2×2 at (1, 1) in lock; 3×2 at (1, 1) in dashboard
+#   * Layout      — lock keeps a 4×4 cell grid. Dashboard now drops the
+#                   per-column cell concept entirely and tiles a
+#                   uniform square mini-tile lattice (DASH_MINI_SIZE)
+#                   across the active area. Content tiles (cal0, cal1,
+#                   weather, identity, clock) are explicit lattice
+#                   regions stored in `dash_content_rects`; every other
+#                   lattice cell is a square mini-tile in
+#                   `empty_tile_rects`, indexed 0..N for reference
+#   * Pong ball   — invisible in dashboard mode. Physics still drives
+#                   the tile-flash interaction; paddles stay visible
+#                   as the only pong vestige
+#   * Ball flash  — each empty mini-tile bumps its alpha briefly when
+#                   the pong ball's centre passes through it; decays
+#                   over TILE_FLASH_DUR. The flash registry lives in
+#                   the `tile_flash` list parallel to empty_tile_rects
+#   * Clock size  — lock uses CLOCK_FONT_SIZE = 260 as a fixed value. In
+#                   dashboard the clock is uniformly scaled at startup
+#                   to fill the 3×2 area with an inter-tile-gap margin
+#                   (2 × HL_INSET) on every side; aspect is preserved
+#   * Clock layer — in lock the clock sits inside a single 2×2 framed
+#                   tile. In dashboard the 6 cells under the clock are
+#                   themselves sub-divided into 3×2 mini-tiles (so the
+#                   underlying lattice continues unbroken), and the
+#                   clock surface renders later as its own visual
+#                   layer on top — no framing tile of its own.
+#   * Cell (1-2,3) — empty input strip with bg + outline in lock; in
+#                   dashboard mode the bottom row is split into 5
+#                   regular chip cells (the input slot is gone)
+#   * No PAM, no keyboard grab, no mouse hide, no input handling
+DASH_UI_FONT_SIZE = 24
+# HANOI (city label under the temp) is pinned at the smaller size so
+# it sits visually quiet beside the now-larger temp.
+DASH_LABEL_FONT_SIZE = 22
+# Mid-tier focal font (DAY DATE) — bigger than chip text but smaller
+# than the clock. Temp gets its own larger tier so it reads as primary
+# weather data. Both render through Google Sans Flex Bold like the
+# clock so the focal elements share a typeface.
+DASH_FOCAL_FONT_SIZE = 40
+DASH_TEMP_FONT_SIZE = 56
 # SPACE wake-hint, rendered as a mini-keyboard bottom row.
 KB_KEY_H = 32                   # height of all hint keys
 KB_MOD_W = 38                   # width of Ctrl/Alt keys
@@ -81,12 +146,12 @@ PAL_KB_DIM    = (55, 60, 67)    # SPACE wake-tile Ctrl/Alt outline + label
 THEMES = {
     "fizx":  {"bg":     (  9,  13,  18), "panel":  ( 13,  17,  23),
               "fg":     (240, 246, 252), "muted":  (107, 122, 141),
-              "accent": (122, 240, 205), "mauve":  (167, 139, 250),
-              "auburn": (178,  96,  58), "ok":     ( 74, 222, 128),
+              "accent": (122, 240, 205), "mauve":  (189, 168, 251),
+              "auburn": (178,  96, 138), "ok":     ( 74, 222, 128),
               "alert":  (248, 113, 113)},
     "upleb": {"bg":     ( 10,  15,  21), "panel":  ( 13,  17,  23),
               "fg":     (201, 209, 217), "muted":  (107, 122, 141),
-              "accent": (255, 182, 158), "mauve":  (255, 179,  71),
+              "accent": (255, 182, 158), "mauve":  (255, 198, 117),
               "auburn": (178,  96,  58), "ok":     ( 74, 222, 128),
               "alert":  (248, 113, 113)},
 }
@@ -105,6 +170,12 @@ CALENDAR_LOOKAHEAD_DAYS = 7     # only surface events within this window
 # carry the dashboard chips. Pong stays full-screen on top so paddles
 # still mark the screen edges.
 GRID_COLS = 4
+# Dashboard mode steps the grid up to 5 columns so the clock can be a
+# centered 3×2 block flanked by uniform 1-cell chip slots. GRID_COLS and
+# CELL_W are overwritten in main() once the mode is resolved; the helper
+# functions read them as module-level names so layout math stays a
+# single point of truth.
+GRID_COLS_DASH = 5
 GRID_ROWS = 4
 # Reserve a vertical band top + bottom that mimics dock/taskbar space —
 # stops the perimeter tiles bleeding into where a panel would sit on a
@@ -116,10 +187,28 @@ SUB_GRID_DIV = 4                # each 4×4 cell subdivided 4 ways → 16×16
 HL_INSET = 10                   # gap between cell edge and highlight frame
 HL_RADIUS = 14                  # highlight corner radius
 HL_WIDTH = 1                    # highlight outline thickness
-TILE_INSET = 10                 # tile-edge → text-edge inset for L-aligned chips
+TILE_INSET = 20                 # tile-edge → text-edge inset for L-aligned chips
 TILE_BG_ALPHA = 38              # ~15% of 255 — calendar-tint tile-bg wash
 TILE_BG_FAINT_ALPHA = 25        # ~10% of 255 — theme-mauve wash on plain tiles
 TILE_BG_INPUT_ALPHA = 12        # ~5% of 255 — input strip, lighter still
+# Dashboard-only interaction: when the pong ball's centre enters one of
+# the sub-divided empty tiles, that tile's alpha is bumped briefly and
+# decays back to TILE_BG_FAINT_ALPHA. Pure visual cue for now —
+# foundation for richer ball/tile interactions later.
+TILE_FLASH_DUR = 0.45           # seconds the flash takes to fade out
+TILE_FLASH_ALPHA_BOOST = 90     # peak alpha added on top of FAINT
+# Universal "main text" colour — used regardless of theme so chrome
+# text reads identically in fizx and upleb. Borrowed from fizx's FG.
+WHITE_TEXT = (240, 246, 252)
+
+# Dashboard-only uniform square-mini-tile lattice. Drops the grid-cell
+# concept entirely for dashboard: every empty mini-tile is the same
+# square size, separated by the same gap, tiled across the entire
+# dashboard area. Content tiles (4 left chips + clock) overlay
+# specific lattice regions; their cells still appear in the registry
+# so the ball-flash effect remains continuous across the surface.
+DASH_MINI_SIZE = 92             # square mini-tile (15 cols fit at this size)
+DASH_MINI_GAP = 2 * HL_INSET    # gap between mini-tiles == inter-cell gap
 PADDLE_GAP = 20                 # clear gap between paddle face and tile edge
 # Col-0 tile edges sit at PADDLE_CLEAR so the rounded outline doesn't
 # kiss the moving paddle. (Right column tiles, when added back, would
@@ -296,6 +385,38 @@ def draw_tile_bg(surf, col, row, colspan=1, rowspan=1, color=None,
     surf.blit(bg, (x, y))
 
 
+def _tile_bg_rect(surf, x, y, w, h, color, alpha):
+    """Translucent rounded fill at an explicit pixel rect — used for
+    sub-divided tiles that don't sit on the main grid."""
+    bg = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(bg, (*color, alpha), (0, 0, w, h),
+                     border_radius=HL_RADIUS)
+    surf.blit(bg, (x, y))
+
+
+def _highlight_rect(surf, x, y, w, h, color=None):
+    """Rounded outline at an explicit pixel rect (sub-divided tiles)."""
+    pygame.draw.rect(surf, color if color is not None else PAL_NET,
+                     (x, y, w, h),
+                     width=HL_WIDTH, border_radius=HL_RADIUS)
+
+
+def _split_3x2(x, y, w, h):
+    """Return 6 (sx, sy, sw, sh) rects subdividing a parent tile into
+    3 columns × 2 rows, with the same gap between sub-tiles as between
+    full cells (2 × HL_INSET)."""
+    gap = 2 * HL_INSET
+    sw = (w - 2 * gap) // 3
+    sh = (h - gap) // 2
+    rects = []
+    for sr in range(2):
+        for sc in range(3):
+            rects.append((x + sc * (sw + gap),
+                          y + sr * (sh + gap),
+                          sw, sh))
+    return rects
+
+
 def draw_highlight(surf, col, row, colspan=1, rowspan=1, color=None,
                    left=None, right=None):
     """Inset, rounded outline that groups a cell or cell-span as one unit.
@@ -449,14 +570,11 @@ def _load_calendars():
 
 def _fetch_calendars_once():
     """Pull each ICS, expand recurrences, capture each calendar's soonest."""
+    if not HAS_ICS:
+        return  # parse deps not installed; silently skip
     calendars = _load_calendars()
     if not calendars:
         return
-    try:
-        import icalendar
-        import recurring_ical_events
-    except ImportError:
-        return  # parse deps not installed yet; silently skip
 
     now = _dt.datetime.now(_dt.timezone.utc)
     until = now + _dt.timedelta(days=CALENDAR_LOOKAHEAD_DAYS)
@@ -485,8 +603,11 @@ def _fetch_calendars_once():
                     if start < now:
                         continue
                     summary = str(ev.get("SUMMARY", "")).strip()
+                    location = str(ev.get("LOCATION", "")).strip()
                     if next_event is None or start < next_event["start"]:
-                        next_event = {"start": start, "summary": summary}
+                        next_event = {"start": start,
+                                      "summary": summary,
+                                      "location": location}
             except Exception:
                 pass  # per-calendar failure; still surface the colour+name
         results.append({"name": name, "color": color, "next": next_event})
@@ -563,6 +684,66 @@ def main():
             "Missing dep: install with `sudo apt install python3-pam`\n")
         return 1
 
+    # Mode-specific grid: dashboard uses 5 cols so the clock can be a
+    # centred 3×2 block. Module-level CELL_W is overwritten so every
+    # helper (cell_center, draw_tile_bg, draw_highlight, draw_grid)
+    # reads the right value via name lookup.
+    global GRID_COLS, CELL_W
+    if dashboard_mode:
+        GRID_COLS = GRID_COLS_DASH
+        CELL_W = LOGICAL_W // GRID_COLS_DASH
+
+    # Dashboard lattice: uniform square mini-tiles tiled across the
+    # active area (between paddle clearance + dock-style top/bottom
+    # inset), centred. Content tiles (4 left chips + clock) overlay
+    # specific regions of the lattice; their cells STILL appear in the
+    # empty_tile_rects list so the ball-flash continues uninterrupted
+    # under the clock layer. Only the left-column content cells are
+    # excluded (those are fully opaque content tiles).
+    empty_tile_rects = []
+    dash_content_rects = {}  # "cal0" | "cal1" | "weather" | "identity" | "clock" -> (x,y,w,h)
+    if dashboard_mode:
+        active_l = PADDLE_CLEAR
+        active_t = DASH_INSET_Y
+        active_w = LOGICAL_W - 2 * PADDLE_CLEAR
+        active_h = LOGICAL_H - 2 * DASH_INSET_Y
+        pitch = DASH_MINI_SIZE + DASH_MINI_GAP
+        lat_cols = (active_w + DASH_MINI_GAP) // pitch
+        lat_rows = (active_h + DASH_MINI_GAP) // pitch
+        lat_w = lat_cols * DASH_MINI_SIZE + (lat_cols - 1) * DASH_MINI_GAP
+        lat_h = lat_rows * DASH_MINI_SIZE + (lat_rows - 1) * DASH_MINI_GAP
+        lat_x = active_l + (active_w - lat_w) // 2
+        lat_y = active_t + (active_h - lat_h) // 2
+
+        def _lat_rect(c, r, cspan=1, rspan=1):
+            return (lat_x + c * pitch,
+                    lat_y + r * pitch,
+                    cspan * DASH_MINI_SIZE + (cspan - 1) * DASH_MINI_GAP,
+                    rspan * DASH_MINI_SIZE + (rspan - 1) * DASH_MINI_GAP)
+
+        # Content regions in lattice coords. Left column: 4 tiles
+        # stacked, each 3 cols × 2 rows. Clock: 4 digits × 2 cols + a
+        # 1-col colon = 9 lattice cols, 2 lattice rows tall (each digit
+        # is drawn within a 2×2 tile boundary — stage-2 work will turn
+        # the glyphs into tile-block characters). 15-col lattice keeps
+        # the clock perfectly centred while leaving the right 3 cols
+        # free for future content.
+        for i, key in enumerate(("cal0", "cal1", "weather", "identity")):
+            dash_content_rects[key] = _lat_rect(0, i * 2, 3, 2)
+        clock_cols = 9
+        clock_rows = 2
+        clock_c = (lat_cols - clock_cols) // 2
+        clock_r = (lat_rows - clock_rows) // 2
+        dash_content_rects["clock"] = _lat_rect(
+            clock_c, clock_r, clock_cols, clock_rows)
+
+        for r in range(lat_rows):
+            for c in range(lat_cols):
+                empty_tile_rects.append(
+                    (lat_x + c * pitch, lat_y + r * pitch,
+                     DASH_MINI_SIZE, DASH_MINI_SIZE))
+    tile_flash = [0.0] * len(empty_tile_rects)
+
     _lock_fp = acquire_single_instance(  # noqa: F841 (kept open for flock)
         DASH_LOCK_FILE if dashboard_mode else LOCK_FILE)
     _ensure_theme_config()
@@ -595,6 +776,37 @@ def main():
         pygame.event.set_grab(True)
 
     surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
+    # Pre-render the static dashboard layer once: bg + grid + all
+    # 112 mini-tile bgs + mini-tile outlines + 4 content tile outlines.
+    # Per-frame work then drops to ~one full-window blit plus dynamic
+    # overlays (cal tints, flashes, clock, text, paddles). Big perf win
+    # over re-allocating ~112 SRCALPHA surfaces every frame.
+    dash_static_surf = None
+    flash_buf = None
+    if dashboard_mode:
+        dash_static_surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
+        dash_static_surf.fill(P["BG"])
+        _faint_static = P["MAUVE"]
+        for (x, y, w, h) in empty_tile_rects:
+            _tile_bg_rect(dash_static_surf, x, y, w, h,
+                          _faint_static, TILE_BG_FAINT_ALPHA)
+            _highlight_rect(dash_static_surf, x, y, w, h)
+        # Slight extra mauve wash over the weather + identity content
+        # regions so the 6-mini-tile group reads as a coherent panel
+        # rather than disappearing into the lattice. Same alpha as
+        # cal tiles' tint (TILE_BG_ALPHA) so the four content tiles
+        # carry equal visual weight. Cal tiles get their per-calendar
+        # tint applied dynamically per frame.
+        for key in ("weather", "identity"):
+            _tile_bg_rect(dash_static_surf, *dash_content_rects[key],
+                          _faint_static, TILE_BG_ALPHA)
+        for key in ("cal0", "cal1", "weather", "identity"):
+            _highlight_rect(dash_static_surf,
+                            *dash_content_rects[key])
+        # Reusable buffer for flash overlays (one alloc, refilled per
+        # active flash).
+        flash_buf = pygame.Surface(
+            (DASH_MINI_SIZE, DASH_MINI_SIZE), pygame.SRCALPHA)
     font = pygame.font.SysFont("monospace", 56)
     small = pygame.font.SysFont("monospace", 32)
     # Typography mirrors the ndisc suite (tailwind.config.ts): Helvetica
@@ -608,49 +820,105 @@ def main():
     # Ubuntu-first stack for everything outside the centre cluster — one
     # uniform size + weight so the focal CLOCK/DAY/DATE stand alone.
     UBUNTU_STACK = "ubuntu,helvetica,arial,nimbus sans,liberation sans"
-    clock_font = pygame.font.SysFont(MONO_STACK, CLOCK_FONT_SIZE, bold=True)
-    dayline_font = pygame.font.SysFont(MONO_STACK, DAYLINE_FONT_SIZE, bold=True)
+    # Dashboard clock face: load the genuine Google Sans Flex Bold
+    # static instance straight from its file (no SDL_ttf faux-bold).
+    # Falls back to a sans-bold SysFont stack if the static file isn't
+    # present on this machine. Lock mode keeps its mono-bold focal
+    # treatment.
+    DASH_CLOCK_FILE = os.path.expanduser(
+        "~/.local/share/fonts/GoogleSansFlex-Bold-Static.ttf")
+    DASH_CLOCK_STACK = ("google sans flex,roboto,inter,ibm plex sans,"
+                        "ubuntu,helvetica,arial,nimbus sans,liberation sans")
+
+    def _make_dash_clock_font(size):
+        if os.path.isfile(DASH_CLOCK_FILE):
+            return pygame.font.Font(DASH_CLOCK_FILE, size)
+        return pygame.font.SysFont(DASH_CLOCK_STACK, size, bold=True)
+
+    if dashboard_mode:
+        clock_font = _make_dash_clock_font(CLOCK_FONT_SIZE)
+        # Grow the clock to fill its lattice region with a margin equal
+        # to the inter-tile gap on every side. Aspect preserved — pick
+        # the smaller of the width-fit and height-fit scales.
+        margin = DASH_MINI_GAP
+        _, _, cw, ch = dash_content_rects["clock"]
+        avail_w = cw - 2 * margin
+        avail_h = ch - 2 * margin
+        probe_w, probe_h = clock_font.size("88:88")
+        scale = min(avail_w / probe_w, avail_h / probe_h)
+        if scale > 1.0:
+            clock_font = _make_dash_clock_font(int(CLOCK_FONT_SIZE * scale))
+    else:
+        clock_font = pygame.font.SysFont(MONO_STACK, CLOCK_FONT_SIZE, bold=True)
+    # Dashboard focal fonts: share the clock's Google Sans Flex Bold
+    # face so the focal stack (clock, DAY DATE, temp) rhymes. Temp has
+    # its own larger tier.
+    dash_focal_font = (_make_dash_clock_font(DASH_FOCAL_FONT_SIZE)
+                       if dashboard_mode else None)
+    dash_temp_font = (_make_dash_clock_font(DASH_TEMP_FONT_SIZE)
+                      if dashboard_mode else None)
+    if dashboard_mode:
+        dayline_font = dash_focal_font
+    else:
+        dayline_font = pygame.font.SysFont(
+            MONO_STACK, DAYLINE_FONT_SIZE, bold=True)
     ui_font = pygame.font.SysFont(
         UBUNTU_STACK,
         DASH_UI_FONT_SIZE if dashboard_mode else UI_FONT_SIZE)
     # Static attribution labels — city for the temp tile, service for the
     # sun tile. Pre-rendered once since neither value changes at runtime.
-    city_surf = (ui_font.render(WEATHER_LOCATION.upper(), True,
-                                P["MAUVE"])
+    # City label sits inline with the now-larger temp — keep it small.
+    city_font = pygame.font.SysFont(
+        UBUNTU_STACK,
+        DASH_LABEL_FONT_SIZE if dashboard_mode else UI_FONT_SIZE)
+    city_surf = (city_font.render(WEATHER_LOCATION.upper(), True,
+                                  WHITE_TEXT)
                  if WEATHER_LOCATION else None)
-    source_surf = ui_font.render("wttr.in", True, P["MAUVE"])
-    event_header_surf = ui_font.render("NEXT", True, P["MAUVE"])
-    # Design profile readout — theme + three signature hexes (accent /
-    # mauve / auburn) each preceded by a tiny filled circle in that tone,
-    # so the chip visually anchors the hex it labels.
+    event_header_surf = ui_font.render(" / NEXT", True, WHITE_TEXT)
+    # Design profile readout — two side-by-side palette columns
+    # (fizx | upleb) so the chip shows both theme identities at once.
+    # Each row is one theme slot (accent / mauve / auburn). Theme name
+    # labels are omitted; the active theme is signalled by the rest of
+    # the dashboard's accent palette.
     hex_rgb = lambda rgb: "#{:02X}{:02X}{:02X}".format(*rgb)
     CHIP_SIZE = 8
     CHIP_TEXT_GAP = 4
-    name_surf = ui_font.render(theme_name.upper(), True, P["MAUVE"])
-    sep_surf = ui_font.render(" · ", True, P["MAUVE"])
-    swatches = [(P["ACCENT"], P["MAUVE"], P["AUBURN"])[i]
-                for i in range(3)]
-    hex_surfs = [ui_font.render(hex_rgb(c), True, P["MAUVE"])
-                 for c in swatches]
-    design_h = max(name_surf.get_height(), CHIP_SIZE,
-                   *(s.get_height() for s in hex_surfs))
-    design_w = (name_surf.get_width()
-                + sum(sep_surf.get_width() + CHIP_SIZE + CHIP_TEXT_GAP
-                      + s.get_width() for s in hex_surfs))
+    ROW_GAP = 2
+    COL_GAP = 20
+    THEME_KEYS = ("fizx", "upleb")
+    SLOTS = ("accent", "mauve", "auburn")
+    theme_rows = {}     # list of (swatch_color, hex_surf) per theme
+    for tk in THEME_KEYS:
+        pal = THEMES[tk]
+        theme_rows[tk] = [
+            (pal[slot],
+             ui_font.render(hex_rgb(pal[slot]), True, WHITE_TEXT))
+            for slot in SLOTS
+        ]
+    col_widths = [
+        max(CHIP_SIZE + CHIP_TEXT_GAP + hex_surf.get_width()
+            for _, hex_surf in theme_rows[tk])
+        for tk in THEME_KEYS
+    ]
+    design_w = sum(col_widths) + COL_GAP * (len(THEME_KEYS) - 1)
+    row_h = max(CHIP_SIZE,
+                theme_rows[THEME_KEYS[0]][0][1].get_height())
+    n_rows = len(SLOTS)
+    design_h = row_h * n_rows + ROW_GAP * (n_rows - 1)
     design_surf = pygame.Surface((design_w, design_h), pygame.SRCALPHA)
-    text_y = (design_h - name_surf.get_height()) // 2
-    chip_cy = design_h // 2
-    x = 0
-    design_surf.blit(name_surf, (x, text_y))
-    x += name_surf.get_width()
-    for chip_color, hex_surf in zip(swatches, hex_surfs):
-        design_surf.blit(sep_surf, (x, text_y))
-        x += sep_surf.get_width()
-        pygame.draw.circle(design_surf, chip_color,
-                           (x + CHIP_SIZE // 2, chip_cy), CHIP_SIZE // 2)
-        x += CHIP_SIZE + CHIP_TEXT_GAP
-        design_surf.blit(hex_surf, (x, text_y))
-        x += hex_surf.get_width()
+    col_x = 0
+    for i, tk in enumerate(THEME_KEYS):
+        y = 0
+        for chip_color, hex_surf in theme_rows[tk]:
+            chip_cy = y + row_h // 2
+            pygame.draw.circle(design_surf, chip_color,
+                               (col_x + CHIP_SIZE // 2, chip_cy),
+                               CHIP_SIZE // 2)
+            design_surf.blit(hex_surf,
+                             (col_x + CHIP_SIZE + CHIP_TEXT_GAP,
+                              y + (row_h - hex_surf.get_height()) // 2))
+            y += row_h + ROW_GAP
+        col_x += col_widths[i] + COL_GAP
     # Pre-render the keyboard hint pieces. Bottom-row only: Ctrl Alt SPACE Alt Ctrl.
     kb_label_font = pygame.font.SysFont(SANS_STACK, KB_LABEL_FONT_SIZE,
                                         bold=True)
@@ -669,16 +937,27 @@ def main():
     ]
     clock_str = ""
     clock_surf = None
+    # Horizontal offset (px) inside clock_surf where the colon's centre
+    # sits. Lets the dashboard blit position the surface so the colon
+    # lands on the central lattice column instead of the surface centre.
+    clock_colon_offset = 0
     dayline_str = ""
     dayline_surf = None
     weather_key = ("", ())
     weather_surf = None
-    host_surf = ui_font.render(user_host, True, P["MAUVE"])
+    host_surf = ui_font.render(user_host, True, WHITE_TEXT)
     # Paddles + ball: clock-tone at ~50% alpha so they sit one visual
     # step back from the focal clock. SRCALPHA surfaces because the main
     # `surf` is opaque — fill alpha is ignored on draw_rect against it.
     paddle_surf = pygame.Surface((PADDLE_W, PADDLE_H), pygame.SRCALPHA)
-    paddle_surf.fill((*P["ACCENT"], PONG_ALPHA))
+    # Paddle colour matches a mini-tile at peak flash intensity — same
+    # mauve, same alpha (FAINT + FLASH_BOOST) — so the paddles read as
+    # the dashboard's reach into the play area.
+    pygame.draw.rect(paddle_surf,
+                     (*P["MAUVE"],
+                      TILE_BG_FAINT_ALPHA + TILE_FLASH_ALPHA_BOOST),
+                     (0, 0, PADDLE_W, PADDLE_H),
+                     border_radius=PADDLE_W // 2)
     ball_surf = pygame.Surface((BALL_SIZE, BALL_SIZE), pygame.SRCALPHA)
     ball_surf.fill((*P["ACCENT"], PONG_ALPHA))
 
@@ -781,78 +1060,132 @@ def main():
             bvx = BALL_SPEED_X * direction
             bvy = BALL_SPEED_Y
 
-        surf.fill(P["BG"])
-        draw_grid(surf)
-        # Look up per-calendar tints before drawing highlights so the two
-        # calendar cells can be framed in their respective colours.
+        # Per-calendar tint lookup (shared by both modes — drawn as an
+        # overlay in dashboard, baked into the cell bg in lock).
         cals_for_render = _events.get("by_calendar", [])
         cal_color_0 = (cals_for_render[0].get("color")
                        if len(cals_for_render) > 0 else None)
         cal_color_1 = (cals_for_render[1].get("color")
                        if len(cals_for_render) > 1 else None)
-        # Tile backdrops: cal tiles get their per-calendar tint at 15%;
-        # everything else (DAY/DATE, CLOCK, input strip, weather, identity)
-        # gets a faint theme-mauve wash at 10%. Drawn before highlights so
-        # the neutral PAL_NET outline sits flush on top. fizx → cool violet,
-        # upleb → warm orange — both fall out of P["MAUVE"] automatically.
-        draw_tile_bg(surf, 0, 0, color=cal_color_0, left=PADDLE_CLEAR)
-        draw_tile_bg(surf, 0, 1, color=cal_color_1, left=PADDLE_CLEAR)
         faint = P["MAUVE"]
-        draw_tile_bg(surf, 1, 0, colspan=2, color=faint,
-                     alpha=TILE_BG_FAINT_ALPHA)
-        draw_tile_bg(surf, 1, 1, colspan=2, rowspan=2, color=faint,
-                     alpha=TILE_BG_FAINT_ALPHA)
-        draw_tile_bg(surf, 1, 3, colspan=2, color=faint,
-                     alpha=TILE_BG_INPUT_ALPHA)
-        draw_tile_bg(surf, 0, 2, color=faint, alpha=TILE_BG_FAINT_ALPHA,
-                     left=PADDLE_CLEAR)
-        draw_tile_bg(surf, 0, 3, color=faint, alpha=TILE_BG_FAINT_ALPHA,
-                     left=PADDLE_CLEAR)
-        # Group highlights — left column stacks the data chips
-        # (cal[0]→cal[1]→temp→sun) top-to-bottom; bottom + right rows
-        # carry the clock identity strip only.
-        draw_highlight(surf, 0, 0, left=PADDLE_CLEAR)           # cal[0] (Jog)
-        draw_highlight(surf, 1, 0, colspan=2)                   # DAY + DATE
-        # (3,0) intentionally empty — right column reserved for future.
-        draw_highlight(surf, 0, 1, left=PADDLE_CLEAR)           # cal[1] (TT)
-        draw_highlight(surf, 1, 1, colspan=2, rowspan=2)        # CLOCK 2×2
-        draw_highlight(surf, 1, 3, colspan=2)                   # input strip
-        draw_highlight(surf, 0, 2, left=PADDLE_CLEAR)           # weather + sun
-        draw_highlight(surf, 0, 3, left=PADDLE_CLEAR)           # identity
+        if dashboard_mode:
+            # Dashboard: blit the pre-rendered static layer (bg + grid +
+            # all 112 mini-tile bgs/outlines + content tile outlines).
+            # Then layer dynamic stuff: cal tints (translucent over
+            # mini-tiles), flash overlays, and content text below.
+            surf.blit(dash_static_surf, (0, 0))
+            if cal_color_0 is not None:
+                _tile_bg_rect(surf, *dash_content_rects["cal0"],
+                              cal_color_0, TILE_BG_ALPHA)
+            if cal_color_1 is not None:
+                _tile_bg_rect(surf, *dash_content_rects["cal1"],
+                              cal_color_1, TILE_BG_ALPHA)
+            for i, (x, y, w, h) in enumerate(empty_tile_rects):
+                if x <= bx <= x + w and y <= by <= y + h:
+                    tile_flash[i] = now
+            for i, (x, y, w, h) in enumerate(empty_tile_rects):
+                elapsed = now - tile_flash[i]
+                if elapsed >= TILE_FLASH_DUR:
+                    continue
+                boost = int(TILE_FLASH_ALPHA_BOOST
+                            * (1 - elapsed / TILE_FLASH_DUR))
+                flash_buf.fill((0, 0, 0, 0))
+                pygame.draw.rect(flash_buf, (*faint, boost),
+                                 (0, 0, w, h),
+                                 border_radius=HL_RADIUS)
+                surf.blit(flash_buf, (x, y))
+        else:
+            surf.fill(P["BG"])
+            draw_grid(surf)
+            # 4×4 lock layout — unchanged.
+            draw_tile_bg(surf, 0, 0, color=cal_color_0, left=PADDLE_CLEAR)
+            draw_tile_bg(surf, 0, 1, color=cal_color_1, left=PADDLE_CLEAR)
+            draw_tile_bg(surf, 1, 0, colspan=2, color=faint,
+                         alpha=TILE_BG_FAINT_ALPHA)              # DAY DATE
+            draw_tile_bg(surf, 1, 1, colspan=2, rowspan=2,
+                         color=faint, alpha=TILE_BG_FAINT_ALPHA)  # CLOCK
+            draw_tile_bg(surf, 1, 3, colspan=2, color=faint,
+                         alpha=TILE_BG_INPUT_ALPHA)              # input
+            draw_tile_bg(surf, 0, 2, color=faint,
+                         alpha=TILE_BG_FAINT_ALPHA,
+                         left=PADDLE_CLEAR)
+            draw_tile_bg(surf, 0, 3, color=faint,
+                         alpha=TILE_BG_FAINT_ALPHA,
+                         left=PADDLE_CLEAR)
+            draw_highlight(surf, 0, 0, left=PADDLE_CLEAR)
+            draw_highlight(surf, 0, 1, left=PADDLE_CLEAR)
+            draw_highlight(surf, 0, 2, left=PADDLE_CLEAR)
+            draw_highlight(surf, 0, 3, left=PADDLE_CLEAR)
+            draw_highlight(surf, 1, 0, colspan=2)               # DAY DATE
+            draw_highlight(surf, 1, 1, colspan=2, rowspan=2)    # CLOCK 2×2
+            draw_highlight(surf, 1, 3, colspan=2)               # input strip
 
         # Central clock — re-rendered only when the displayed time changes.
         cur_clock = time.strftime("%H:%M" if CLOCK_24H else "%-I:%M")
         if cur_clock != clock_str:
             clock_str = cur_clock
             clock_surf = clock_font.render(clock_str, True, P["ACCENT"])
+            if dashboard_mode:
+                # Measure the colon's horizontal centre inside the
+                # rendered surface so we can pin it to the lattice's
+                # central column rather than the surface midpoint.
+                colon_idx = clock_str.find(":")
+                w_left = clock_font.size(clock_str[:colon_idx])[0]
+                w_through = clock_font.size(clock_str[:colon_idx + 1])[0]
+                clock_colon_offset = (w_left + w_through) // 2
         cur_dayline = time.strftime("%a %d %b").upper()
         if cur_dayline != dayline_str:
             dayline_str = cur_dayline
             dayline_surf = dayline_font.render(dayline_str, True,
                                                P["MAUVE_FADE"])
-        cur_weather_key = (_weather["text"], _weather["sun"])
+        # Dashboard mode folds the date line into the weather composite
+        # (the standalone DATE tile at (2,0) is empty for now), so the
+        # composite rebuilds whenever the date rolls over too.
+        cur_weather_key = (_weather["text"],
+                           dayline_str if dashboard_mode else None)
         if cur_weather_key != weather_key:
             weather_key = cur_weather_key
-            temp_text, sun_pair = cur_weather_key
+            temp_text, _date_key = cur_weather_key
             if temp_text:
-                gap = 6
-                parts = [ui_font.render(temp_text, True, P["AUBURN"])]
+                INLINE_GAP = 12  # horizontal gap between temp ↔ city
+                temp_font = (dash_temp_font
+                             if dashboard_mode else ui_font)
+                temp_surf = temp_font.render(temp_text, True, P["AUBURN"])
+                row_tc = [temp_surf]
                 if city_surf is not None:
-                    parts.append(city_surf)
-                if sun_pair:
-                    parts.append(ui_font.render(sun_pair[0], True,
-                                                P["MAUVE"]))
-                    parts.append(ui_font.render(sun_pair[1], True,
-                                                P["MAUVE"]))
-                parts.append(source_surf)
-                w = max(p.get_width() for p in parts)
-                h = (sum(p.get_height() for p in parts)
-                     + gap * (len(parts) - 1))
-                weather_surf = pygame.Surface((w, h), pygame.SRCALPHA)
-                y_off = 0
-                for p in parts:
-                    weather_surf.blit(p, (0, y_off))
-                    y_off += p.get_height() + gap
+                    row_tc.append(city_surf)
+                row_tc_w = (sum(s.get_width() for s in row_tc)
+                            + INLINE_GAP * (len(row_tc) - 1))
+                row_tc_h = max(s.get_height() for s in row_tc)
+                if dashboard_mode and dayline_surf is not None:
+                    # Pin the dayline to the centre of the top mini-row
+                    # and the temp+city row to the centre of the bottom
+                    # mini-row inside the content rect. Vertical padding
+                    # then falls out of the lattice rhythm.
+                    _, _, _, content_h = dash_content_rects["weather"]
+                    top_cy = DASH_MINI_SIZE // 2
+                    bot_cy = (DASH_MINI_SIZE + DASH_MINI_GAP
+                              + DASH_MINI_SIZE // 2)
+                    w = max(dayline_surf.get_width(), row_tc_w)
+                    weather_surf = pygame.Surface(
+                        (w, content_h), pygame.SRCALPHA)
+                    weather_surf.blit(
+                        dayline_surf,
+                        (0, top_cy - dayline_surf.get_height() // 2))
+                    x = 0
+                    y = bot_cy - row_tc_h // 2
+                    for s in row_tc:
+                        weather_surf.blit(
+                            s, (x, y + (row_tc_h - s.get_height()) // 2))
+                        x += s.get_width() + INLINE_GAP
+                else:
+                    weather_surf = pygame.Surface(
+                        (row_tc_w, row_tc_h), pygame.SRCALPHA)
+                    x = 0
+                    for s in row_tc:
+                        weather_surf.blit(
+                            s, (x, (row_tc_h - s.get_height()) // 2))
+                        x += s.get_width() + INLINE_GAP
             else:
                 weather_surf = None
 
@@ -861,26 +1194,44 @@ def main():
             cx, cy = cell_center(col, row, colspan, rowspan)
             surf.blit(s, (cx - s.get_width() // 2, cy - s.get_height() // 2))
 
-        # CLOCK — centre 2×2.
-        blit_cell(clock_surf, 1, 1, colspan=2, rowspan=2)
+        # CLOCK — 2×2 in lock, 3×2 in dashboard (col 2 is the centre
+        # column of the 5-col grid). DAY DATE sits as a single-cell
+        # chip at col 2 in dashboard, or the merged (1,0)+(2,0) span
+        # in lock.
+        if dashboard_mode:
+            # Clock floats over its lattice region; colon is pinned to
+            # the central lattice column (= rect centre x), digits
+            # spread proportionally around it.
+            cx, cy, cw, ch = dash_content_rects["clock"]
+            center_x = cx + cw // 2
+            surf.blit(clock_surf,
+                      (center_x - clock_colon_offset,
+                       cy + (ch - clock_surf.get_height()) // 2))
+        else:
+            blit_cell(clock_surf, 1, 1, colspan=2, rowspan=2)
+            blit_cell(dayline_surf, 1, 0, colspan=2)
 
-        # Top row: (0,0) empty | "MON 08 JUN" spanning (1,0)+(2,0) | (3,0) empty.
-        blit_cell(dayline_surf, 1, 0, colspan=2)
+        # Shared left-column text-left anchor + per-tile centre lookups.
+        if dashboard_mode:
+            col0_text_x = dash_content_rects["cal0"][0] + TILE_INSET
+            _cy = lambda k: (dash_content_rects[k][1]
+                             + dash_content_rects[k][3] // 2)
+        else:
+            col0_text_x = PADDLE_CLEAR + TILE_INSET
+            _cm = {"cal0": (0, 0), "cal1": (0, 1),
+                   "weather": (0, 2), "identity": (0, 3)}
+            _cy = lambda k: cell_center(*_cm[k])[1]
 
-        # Shared left-column text-left anchor (cal chips + weather +
-        # identity all flush to this x).
-        col0_text_x = PADDLE_CLEAR + TILE_INSET
-
-        # Left column row 2: weather + sun + source composite, flush-left.
+        # Weather composite (with DATE in dashboard mode), flush-left.
         if weather_surf is not None:
-            cy = cell_center(0, 2)[1]
+            cy = _cy("weather")
             surf.blit(weather_surf,
                       (col0_text_x, cy - weather_surf.get_height() // 2))
 
-        # Identity + design chip at (0,3) — two lines: user@host above
-        # the design profile (theme + key hexes).
-        nc_y = cell_center(0, 3)[1]
-        row_gap = 6
+        # Identity + design chip — two lines: user@host above the
+        # design profile (theme + key hexes).
+        nc_y = _cy("identity")
+        row_gap = 16
         chip_h = host_surf.get_height() + row_gap + design_surf.get_height()
         host_y = nc_y - chip_h // 2
         design_y = host_y + host_surf.get_height() + row_gap
@@ -900,38 +1251,53 @@ def main():
             name_surf = ui_font.render(
                 cal["name"].upper(), True, name_color)
             time_surf = None
+            location_surf = None
             summary_surf = None
             if cal["next"]:
                 local_start = cal["next"]["start"].astimezone()
-                time_text = local_start.strftime("%a %H:%M")
+                time_text = local_start.strftime(
+                    "%a %d %b | %H:%M").upper()
                 summary_text = cal["next"]["summary"].upper()[:EVENT_LABEL_MAX]
                 time_surf = ui_font.render(
-                    time_text, True, P["MAUVE"])
+                    time_text, True, WHITE_TEXT)
                 summary_surf = ui_font.render(
-                    summary_text, True, P["MAUVE"])
-            parts = [name_surf]
-            if time_surf is not None:
-                parts.extend([event_header_surf, time_surf, summary_surf])
-            stacked_h = (sum(p.get_height() for p in parts)
-                         + 4 * (len(parts) - 1))
-            cy = cell_center(col, row)[1]
-            left_x = PADDLE_CLEAR + TILE_INSET
+                    summary_text, True, WHITE_TEXT)
+                loc_text = (cal["next"].get("location", "")
+                            .upper()[:EVENT_LABEL_MAX])
+                if loc_text:
+                    location_surf = ui_font.render(
+                        loc_text, True, WHITE_TEXT)
+            # Each row is a list of surfs laid left-to-right; row height
+            # = max of the surfs in it. First row combines the cal name
+            # with " / NEXT" so the header sits inline with the title.
+            if time_surf is None:
+                rows = [[name_surf]]
+            else:
+                rows = [[name_surf, event_header_surf], [time_surf]]
+                if location_surf is not None:
+                    rows.append([location_surf])
+                rows.append([summary_surf])
+            row_heights = [max(s.get_height() for s in r) for r in rows]
+            stacked_h = sum(row_heights) + 4 * (len(rows) - 1)
+            cy = _cy("cal0" if i == 0 else "cal1")
+            left_x = col0_text_x
             y = cy - stacked_h // 2
-            surf.blit(name_surf, (left_x, y))
-            y += name_surf.get_height() + 4
-            if time_surf is not None:
-                surf.blit(event_header_surf, (left_x, y))
-                y += event_header_surf.get_height() + 4
-                surf.blit(time_surf, (left_x, y))
-                y += time_surf.get_height() + 4
-                surf.blit(summary_surf, (left_x, y))
+            for row, rh in zip(rows, row_heights):
+                x = left_x
+                for s in row:
+                    surf.blit(s, (x, y + (rh - s.get_height()) // 2))
+                    x += s.get_width()
+                y += rh + 4
 
         surf.blit(paddle_surf,
                   (PADDLE_MARGIN, int(pl - PADDLE_H / 2)))
         surf.blit(paddle_surf,
                   (LOGICAL_W - PADDLE_MARGIN - PADDLE_W, int(pr - PADDLE_H / 2)))
-        surf.blit(ball_surf,
-                  (int(bx - BALL_SIZE / 2), int(by - BALL_SIZE / 2)))
+        # Ball runs the physics + tile-flash driver but is invisible in
+        # dashboard mode — the lattice flashes carry the signal now.
+        if not dashboard_mode:
+            surf.blit(ball_surf,
+                      (int(bx - BALL_SIZE / 2), int(by - BALL_SIZE / 2)))
 
         # Input strip lives in its own 2×1 tile below the clock; everything
         # related (asterisks, warning bar, kb hint, feedback) centres on it.
