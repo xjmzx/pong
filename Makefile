@@ -19,12 +19,14 @@ install:
 	install -D -m644 -- pong.desktop "$(DESTDIR)$(PREFIX)/share/applications/pong.desktop"
 	install -D -m644 -- pong-dash.desktop "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	install -D -m644 -- icon.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
+	install -D -m644 -- icon-dash.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong-dash.svg"
 
 uninstall:
 	rm -f -- "$(DESTDIR)$(PREFIX)/bin/pong"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/applications/pong.desktop"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
+	rm -f -- "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong-dash.svg"
 
 deps:
 	@echo "Installing pong runtime deps..."

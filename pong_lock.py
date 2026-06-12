@@ -76,8 +76,9 @@ UI_FONT_SIZE = 14               # lock-mode legacy; unused after the port
 #                    input loop with INPUT_TIMEOUT + lockout state.
 #                    Dashboard acquires DASH_LOCK_FILE, no PAM, no
 #                    grab, mouse visible, Esc/Q to quit.
-#   * Ball         — visible only in lock (the ambient-pong vestige).
-#                    Physics + tile-flash interaction run in both.
+#   * Ball         — invisible in both modes. Physics still drives the
+#                    paddles + tile-flash; the lattice flashes carry
+#                    the signal of its position.
 #   * Input strip  — only rendered in lock mode. Sits at the central
 #                    lattice column (col 7) row 6, just below the
 #                    clock. Mini-keyboard wake-hint when idle;
@@ -747,13 +748,27 @@ def main():
     dash_static_surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
     dash_static_surf.fill(P["BG"])
     _faint_static = P["MAUVE"]
+    # Mini-tile fills first, then any mode-specific washes, then the
+    # outlines on top — so the outlines stay crisp regardless of what
+    # tinting happens underneath.
     for (x, y, w, h) in empty_tile_rects:
         _tile_bg_rect(dash_static_surf, x, y, w, h,
                       _faint_static, TILE_BG_FAINT_ALPHA)
-        _highlight_rect(dash_static_surf, x, y, w, h)
     for key in ("weather", "identity"):
         _tile_bg_rect(dash_static_surf, *dash_content_rects[key],
                       _faint_static, TILE_BG_ALPHA)
+    # Lock mode: dark wash over the 5 mini-tiles that hold the password
+    # input strip (cols 5-9, row 6) so the login zone reads as a
+    # dedicated area against the lattice.
+    if not dashboard_mode:
+        for c in range(5, 10):
+            tile_x = lat_x + c * pitch
+            tile_y = lat_y + 6 * pitch
+            _tile_bg_rect(dash_static_surf, tile_x, tile_y,
+                          DASH_MINI_SIZE, DASH_MINI_SIZE,
+                          P["BG"], 140)
+    for (x, y, w, h) in empty_tile_rects:
+        _highlight_rect(dash_static_surf, x, y, w, h)
     for key in ("cal0", "cal1", "weather", "identity"):
         _highlight_rect(dash_static_surf,
                         *dash_content_rects[key])
@@ -1167,18 +1182,15 @@ def main():
                   (PADDLE_MARGIN, int(pl - PADDLE_H / 2)))
         surf.blit(paddle_surf,
                   (LOGICAL_W - PADDLE_MARGIN - PADDLE_W, int(pr - PADDLE_H / 2)))
-        # Ball: visible in lock mode (the ambient-pong vestige) but
-        # hidden in dashboard mode — lattice flashes carry the signal
-        # there instead. Physics + flashes run in both modes.
-        if not dashboard_mode:
-            surf.blit(ball_surf,
-                      (int(bx - BALL_SIZE / 2), int(by - BALL_SIZE / 2)))
+        # Ball is invisible in both modes — the lattice flashes carry
+        # the signal of its position. Physics + flashes still drive
+        # the paddles and the tile interaction.
 
-        # Password input strip — lock mode only. Positioned at the
-        # central lattice column (col 7), row 6, just below the clock.
-        # The mini-keyboard wake-hint sits there when idle; password
-        # asterisks + warning bar when typing; feedback text stacks
-        # above either.
+        # Password input strip — lock mode only. The dark wash baked
+        # into the 5-tile region (cols 5-9, row 6) is the visual cue
+        # for where the field lives; no keyboard graphic is needed.
+        # SPACE still wakes the prompt; asterisks + warning bar
+        # appear when typing; feedback text stacks above.
         if not dashboard_mode:
             if typing:
                 t = font.render("*" * len(typed) + "_", True, P["MAUVE"])
@@ -1192,17 +1204,6 @@ def main():
                                      (bar_x, bar_y,
                                       int(INPUT_BAR_WIDTH * (remaining / INPUT_WARN_SEC)),
                                       INPUT_BAR_HEIGHT))
-            else:
-                kx = input_cx - kb_total_w // 2
-                ky = input_cy - KB_KEY_H // 2
-                for w, label_surf, color in kb_keys:
-                    pygame.draw.rect(surf, color, (kx, ky, w, KB_KEY_H),
-                                     width=1, border_radius=KB_RADIUS)
-                    if label_surf is not None:
-                        surf.blit(label_surf,
-                                  (kx + (w - label_surf.get_width()) // 2,
-                                   ky + (KB_KEY_H - label_surf.get_height()) // 2))
-                    kx += w + KB_GAP
             if feedback and now < feedback_until:
                 t = small.render(feedback, True, P["ALERT"])
                 fb_y = input_cy - t.get_height() // 2
