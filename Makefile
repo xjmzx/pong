@@ -20,6 +20,10 @@ install:
 	install -D -m644 -- pong-dash.desktop "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	install -D -m644 -- icon.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
 	install -D -m644 -- icon-dash.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong-dash.svg"
+	install -d "$(DESTDIR)$(PREFIX)/share/systemd/user"
+	sed 's|@BINDIR@|$(PREFIX)/bin|g' pong-lock.service.in \
+	  > "$(DESTDIR)$(PREFIX)/share/systemd/user/pong-lock.service"
+	chmod 644 "$(DESTDIR)$(PREFIX)/share/systemd/user/pong-lock.service"
 
 uninstall:
 	rm -f -- "$(DESTDIR)$(PREFIX)/bin/pong"
@@ -27,6 +31,7 @@ uninstall:
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/applications/pong-dash.desktop"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong.svg"
 	rm -f -- "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/pong-dash.svg"
+	rm -f -- "$(DESTDIR)$(PREFIX)/share/systemd/user/pong-lock.service"
 
 deps:
 	@echo "Installing pong runtime deps..."

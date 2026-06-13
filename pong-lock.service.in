@@ -1,0 +1,23 @@
+[Unit]
+Description=Ambient Pong screen lock
+Documentation=https://github.com/xjmzx/pong
+# Tie to the graphical session so a logout cleans the unit up and a
+# fresh login starts from a known state.
+PartOf=graphical-session.target
+After=graphical-session.target
+# Cap respawn churn: 5 restart attempts inside 60s and the unit stops
+# trying — otherwise a genuinely broken binary would loop forever.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/pong
+# Respawn on crash (uncaught exception, segfault, fatal signal other
+# than SIGTERM/SIGINT). A clean exit-0 (successful PAM auth, user
+# pressing Esc/Q, `systemctl --user stop pong-lock`) does NOT respawn.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

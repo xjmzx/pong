@@ -9,16 +9,19 @@ Two modes share one binary:
   press Esc/Q to quit.
 """
 
+import atexit
 import datetime as _dt
 import fcntl
 import getpass
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -193,6 +196,7 @@ PADDLE_CLEAR = PADDLE_MARGIN + PADDLE_W + PADDLE_GAP
 STATE_FILE = os.path.expanduser("~/.cache/pong_lock_state")
 LOCK_FILE = os.path.expanduser("~/.cache/pong_lock.lock")
 DASH_LOCK_FILE = os.path.expanduser("~/.cache/pong_dash.lock")
+CRASH_LOG = os.path.expanduser("~/.cache/pong/crash.log")
 
 # Dashboard-mode window defaults.
 DASH_WIN_W, DASH_WIN_H = 1280, 720
@@ -260,6 +264,58 @@ def build_palette(name):
         "OK":          t["ok"],
         "ALERT":       t["alert"],
     }
+
+
+def _log_crash(label, exc_type, exc_value, exc_tb):
+    """Append a timestamped traceback to CRASH_LOG. Best-effort: a
+    log-write failure must never raise out of an exception handler."""
+    try:
+        os.makedirs(os.path.dirname(CRASH_LOG), exist_ok=True)
+        with open(CRASH_LOG, "a") as f:
+            ts = _dt.datetime.now().isoformat(timespec="seconds")
+            f.write(f"\n=== {ts} [{label}] ===\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+    except OSError:
+        pass
+
+
+def install_emergency_cleanup(dashboard_mode):
+    """Release the X keyboard grab + restore the mouse cursor on ANY
+    exit path — clean return, unhandled exception, or SIGTERM. Without
+    this, a crash in lock mode can leave the keyboard grabbed by a dead
+    process; the user then can't type into GDM and has to switch VT or
+    reboot. atexit doesn't fire on SIGKILL — nothing can save us there.
+
+    Python's default SIGTERM behaviour is to terminate without running
+    atexit; the handler below converts SIGTERM into SystemExit so the
+    registered cleanup still gets to run."""
+    def cleanup():
+        try:
+            if not dashboard_mode:
+                pygame.event.set_grab(False)
+            pygame.mouse.set_visible(True)
+            pygame.quit()
+        except Exception:
+            pass
+    atexit.register(cleanup)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+
+def install_crash_logging(mode_label):
+    """Route unhandled exceptions from the main thread + any daemon
+    thread into CRASH_LOG before the default handler runs. Lets us see
+    what killed a long-running session instead of `journalctl` only
+    showing the systemd scope exit."""
+    def hook(exc_type, exc_value, exc_tb):
+        _log_crash(mode_label, exc_type, exc_value, exc_tb)
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    def thread_hook(args):
+        _log_crash(f"{mode_label}/thread:{args.thread.name}",
+                   args.exc_type, args.exc_value, args.exc_traceback)
+
+    sys.excepthook = hook
+    threading.excepthook = thread_hook
 
 
 def acquire_single_instance(lock_path=LOCK_FILE):
@@ -463,9 +519,12 @@ def _fetch_weather_once():
 def start_weather_thread():
     def loop():
         while True:
-            _fetch_weather_once()
+            try:
+                _fetch_weather_once()
+            except Exception:
+                _log_crash("weather/thread", *sys.exc_info())
             time.sleep(WEATHER_REFRESH_SEC)
-    t = threading.Thread(target=loop, daemon=True)
+    t = threading.Thread(target=loop, daemon=True, name="weather")
     t.start()
 
 
@@ -592,9 +651,12 @@ def _fetch_calendars_once():
 def start_calendar_thread():
     def loop():
         while True:
-            _fetch_calendars_once()
+            try:
+                _fetch_calendars_once()
+            except Exception:
+                _log_crash("calendar/thread", *sys.exc_info())
             time.sleep(CALENDAR_REFRESH_SEC)
-    t = threading.Thread(target=loop, daemon=True)
+    t = threading.Thread(target=loop, daemon=True, name="calendar")
     t.start()
 
 
@@ -653,6 +715,8 @@ def main():
         print("  --dashboard   view the dashboard in a resizable window")
         return 0
     dashboard_mode = "--dashboard" in args or "--dash" in args
+    install_crash_logging("dash" if dashboard_mode else "lock")
+    install_emergency_cleanup(dashboard_mode)
 
     if not dashboard_mode and PAM is None:
         sys.stderr.write(
@@ -934,8 +998,15 @@ def main():
                 continue
             if dashboard_mode:
                 if ev.type == pygame.VIDEORESIZE:
+                    # Mutter/X11 fires VIDEORESIZE per pixel of mouse
+                    # motion during an edge-drag. set_mode rebuilds
+                    # the SDL surface and stutters the drag if called
+                    # on each one. Drain the queue and act on the last
+                    # size only.
+                    queued = pygame.event.get(pygame.VIDEORESIZE)
+                    new_size = queued[-1].size if queued else ev.size
                     screen = pygame.display.set_mode(
-                        ev.size, pygame.RESIZABLE)
+                        new_size, pygame.RESIZABLE)
                 elif ev.type == pygame.KEYDOWN and ev.key in (
                         pygame.K_ESCAPE, pygame.K_q):
                     running = False
@@ -1228,12 +1299,14 @@ def main():
                 tex.draw(dstrect=dst)
             ren.present()
 
-        clock.tick(60)
+        # Dashboard is ambient — 30fps halves CPU + heat without any
+        # perceptible motion loss. Lock mode stays at 60fps because the
+        # user is actively looking at it (and at the input strip).
+        clock.tick(30 if dashboard_mode else 60)
 
-    if not dashboard_mode:
-        pygame.event.set_grab(False)
-    pygame.mouse.set_visible(True)
-    pygame.quit()
+    # Cleanup (grab release, mouse restore, pygame.quit) is registered
+    # via atexit by install_emergency_cleanup, so it runs on this clean
+    # exit path as well as on crashes / SIGTERM.
 
 
 if __name__ == "__main__":
