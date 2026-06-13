@@ -26,6 +26,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# Switch stdout/stderr to line buffering so journalctl shows lifecycle
+# prints + the pygame banner in real time. Default is block buffering
+# when stdout isn't a TTY, which is why systemd scopes only flush at
+# process exit and we can't see what the process was doing.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except (AttributeError, OSError):
+    pass
+
 import pygame
 from pygame._sdl2.video import Renderer, Texture, Window
 
@@ -142,7 +152,10 @@ WEATHER_TIMEOUT_SEC = 6         # fetch timeout
 EVENT_LABEL_MAX = 14            # truncate event labels to this many chars
 CALENDAR_CONFIG = os.path.expanduser("~/.config/pong/calendars.json")
 CALENDAR_REFRESH_SEC = 600      # 10 min between ICS fetches
-CALENDAR_LOOKAHEAD_DAYS = 7     # only surface events within this window
+# 35-day window covers the full rolling 4-week calendar block (4 × 7
+# days = 28) plus a buffer for events near the window edges.
+CALENDAR_LOOKAHEAD_DAYS = 35
+CALENDAR_LOOKBACK_DAYS = 7      # safety: events earlier in current week
 
 # 4×4 dashboard grid. Clock occupies the centre 2×2; perimeter cells
 # carry the dashboard chips. Pong stays full-screen on top so paddles
@@ -279,6 +292,24 @@ def _log_crash(label, exc_type, exc_value, exc_tb):
         pass
 
 
+def _log_lifecycle(label, detail=""):
+    """Append a one-line lifecycle event to CRASH_LOG. Used to leave
+    a trail when the process exits cleanly but unexpectedly (e.g.
+    pygame.QUIT delivered by Mutter during a multi-monitor drag) —
+    sys.excepthook only catches Python exceptions, so non-exception
+    exits would otherwise vanish from our diagnostics."""
+    try:
+        os.makedirs(os.path.dirname(CRASH_LOG), exist_ok=True)
+        with open(CRASH_LOG, "a") as f:
+            ts = _dt.datetime.now().isoformat(timespec="seconds")
+            line = f"{ts} [lifecycle:{label}]"
+            if detail:
+                line += f" {detail}"
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 def install_emergency_cleanup(dashboard_mode):
     """Release the X keyboard grab + restore the mouse cursor on ANY
     exit path — clean return, unhandled exception, or SIGTERM. Without
@@ -290,6 +321,8 @@ def install_emergency_cleanup(dashboard_mode):
     atexit; the handler below converts SIGTERM into SystemExit so the
     registered cleanup still gets to run."""
     def cleanup():
+        _log_lifecycle("exit",
+                       f"mode={'dash' if dashboard_mode else 'lock'}")
         try:
             if not dashboard_mode:
                 pygame.event.set_grab(False)
@@ -297,8 +330,14 @@ def install_emergency_cleanup(dashboard_mode):
             pygame.quit()
         except Exception:
             pass
+
+    def on_sigterm(*_):
+        _log_lifecycle("sigterm",
+                       f"mode={'dash' if dashboard_mode else 'lock'}")
+        sys.exit(0)
+
     atexit.register(cleanup)
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, on_sigterm)
 
 
 def install_crash_logging(mode_label):
@@ -528,7 +567,12 @@ def start_weather_thread():
     t.start()
 
 
-_events = {"by_calendar": []}  # [{name, color, next: {start, summary} or None}]
+# `by_calendar` keeps the "next event per calendar" used by clock-view
+# cal0/cal1 chips. `by_date` is a dict {date_obj: [(color, name, summary), ...]}
+# used by calendar-view date tiles to render per-event labels.
+# `version` is bumped on every successful fetch so the main thread
+# knows when to invalidate caches.
+_events = {"by_calendar": [], "by_date": {}, "version": 0}
 
 
 # Google Calendar's named palette (approximate RGB). Lets the config name
@@ -602,8 +646,21 @@ def _load_calendars():
         return []
 
 
+def _start_local_date(start):
+    """Return the local calendar date of a DTSTART value, handling
+    both all-day events (start is a `date`) and timed events (start
+    is a `datetime`, possibly naive)."""
+    if isinstance(start, _dt.date) and not isinstance(start, _dt.datetime):
+        return start
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=_dt.timezone.utc)
+    return start.astimezone().date()
+
+
 def _fetch_calendars_once():
-    """Pull each ICS, expand recurrences, capture each calendar's soonest."""
+    """Pull each ICS, expand recurrences, capture each calendar's
+    soonest event AND index every event in the window by local date so
+    calendar-view date tiles can flag event presence per day."""
     if not HAS_ICS:
         return  # parse deps not installed; silently skip
     calendars = _load_calendars()
@@ -611,8 +668,10 @@ def _fetch_calendars_once():
         return
 
     now = _dt.datetime.now(_dt.timezone.utc)
-    until = now + _dt.timedelta(days=CALENDAR_LOOKAHEAD_DAYS)
+    window_start = now - _dt.timedelta(days=CALENDAR_LOOKBACK_DAYS)
+    window_end = now + _dt.timedelta(days=CALENDAR_LOOKAHEAD_DAYS)
     results = []
+    by_date = {}
     for cal in calendars:
         url = cal.get("url")
         name = cal.get("name", "")
@@ -626,26 +685,50 @@ def _fetch_calendars_once():
                                             timeout=10) as resp:
                     ics_data = resp.read()
                 ical = icalendar.Calendar.from_ical(ics_data)
-                for ev in recurring_ical_events.of(ical).between(now, until):
-                    start = ev.get("DTSTART").dt
-                    if (isinstance(start, _dt.date)
-                            and not isinstance(start, _dt.datetime)):
-                        start = _dt.datetime.combine(
-                            start, _dt.time.min, tzinfo=_dt.timezone.utc)
-                    elif start.tzinfo is None:
-                        start = start.replace(tzinfo=_dt.timezone.utc)
-                    if start < now:
-                        continue
+                for ev in recurring_ical_events.of(ical).between(
+                        window_start, window_end):
+                    start_raw = ev.get("DTSTART").dt
+                    local_date = _start_local_date(start_raw)
+                    # Normalize start into a tz-aware datetime for the
+                    # "next event" comparator below.
+                    if (isinstance(start_raw, _dt.date)
+                            and not isinstance(start_raw, _dt.datetime)):
+                        start_dt = _dt.datetime.combine(
+                            start_raw, _dt.time.min,
+                            tzinfo=_dt.timezone.utc)
+                    elif start_raw.tzinfo is None:
+                        start_dt = start_raw.replace(
+                            tzinfo=_dt.timezone.utc)
+                    else:
+                        start_dt = start_raw
                     summary = str(ev.get("SUMMARY", "")).strip()
                     location = str(ev.get("LOCATION", "")).strip()
-                    if next_event is None or start < next_event["start"]:
-                        next_event = {"start": start,
-                                      "summary": summary,
-                                      "location": location}
+                    # Local HH:MM (or None for all-day events) so the
+                    # 4-day outlook can sort chronologically and prefix
+                    # event labels with the start time.
+                    if (isinstance(start_raw, _dt.date)
+                            and not isinstance(start_raw, _dt.datetime)):
+                        time_str = None
+                    else:
+                        time_str = start_dt.astimezone().strftime("%H:%M")
+                    # Per-date index: include all events in the window
+                    # (past and future) so the calendar view shows the
+                    # full picture of the visible 4 weeks.
+                    by_date.setdefault(local_date, []).append(
+                        (color, name, summary, time_str))
+                    # Next event: future only, for clock-view chip.
+                    if start_dt >= now:
+                        if (next_event is None
+                                or start_dt < next_event["start"]):
+                            next_event = {"start": start_dt,
+                                          "summary": summary,
+                                          "location": location}
             except Exception:
                 pass  # per-calendar failure; still surface the colour+name
         results.append({"name": name, "color": color, "next": next_event})
     _events["by_calendar"] = results
+    _events["by_date"] = by_date
+    _events["version"] = _events.get("version", 0) + 1
 
 
 def start_calendar_thread():
@@ -717,6 +800,9 @@ def main():
     dashboard_mode = "--dashboard" in args or "--dash" in args
     install_crash_logging("dash" if dashboard_mode else "lock")
     install_emergency_cleanup(dashboard_mode)
+    _log_lifecycle("startup",
+                   f"mode={'dash' if dashboard_mode else 'lock'} "
+                   f"pid={os.getpid()}")
 
     if not dashboard_mode and PAM is None:
         sys.stderr.write(
@@ -818,9 +904,9 @@ def main():
     for (x, y, w, h) in empty_tile_rects:
         _tile_bg_rect(dash_static_surf, x, y, w, h,
                       _faint_static, TILE_BG_FAINT_ALPHA)
-    for key in ("weather", "identity"):
-        _tile_bg_rect(dash_static_surf, *dash_content_rects[key],
-                      _faint_static, TILE_BG_ALPHA)
+    # Weather + identity group washes used to be baked in here, but
+    # they fight the calendar-view per-group event/empty wash. They're
+    # applied per-frame in clock view only further down.
     # Lock mode: dark wash over the 5 mini-tiles that hold the password
     # input strip (cols 5-9, row 6) so the login zone reads as a
     # dedicated area against the lattice.
@@ -884,6 +970,59 @@ def main():
     dash_focal_font = _make_dash_clock_font(DASH_FOCAL_FONT_SIZE)
     dash_temp_font = _make_dash_clock_font(DASH_TEMP_FONT_SIZE)
     dayline_font = dash_focal_font
+    # Calendar date numerals. Dates land at the top-right mini-tile of
+    # each conceptual 3×2 tile group, matching the rhythm of the four
+    # existing left content tiles (cal0/cal1/weather/identity). The grid
+    # tiles the whole lattice — 5 groups across × 4 down = 20 dates,
+    # Mon-Fri across, weeks down. Anchor (col 2, row 0) = top-right of
+    # the Jog content tile = Mon of the first rolling week.
+    # Same Google Sans Flex Bold face + P["ACCENT"] as the clock so the
+    # dates rhyme typographically with the focal typography.
+    # Calendar-view date numerals. Pre-render once at startup, rebuild
+    # on day rollover (handled in the main loop). Each entry is a
+    # 6-tuple: (date_obj, surface, blit_x, blit_y, tile_x, tile_y).
+    # tile_x/tile_y are kept around for per-frame event pip placement.
+    date_blits = []
+    date_font = None
+    DATE_COLS = (2, 5, 8, 11, 14)   # top-right of each 3-col group
+    DATE_ROWS = (0, 2, 4, 6)        # top row of each 2-row group
+    cal_anchor_date = None
+
+    def _calendar_anchor(today):
+        """Mon-Fri today → this week's Monday. Sat-Sun today → next
+        Monday. So the calendar block always opens on a workday-week
+        and the weekend doesn't display a fading current row."""
+        wd = today.weekday()
+        if wd <= 4:
+            return today - _dt.timedelta(days=wd)
+        return today + _dt.timedelta(days=7 - wd)
+
+    def _build_date_blits(anchor):
+        blits = []
+        for ri, rr in enumerate(DATE_ROWS):
+            for ci, cc in enumerate(DATE_COLS):
+                d = anchor + _dt.timedelta(days=ri * 7 + ci)
+                ds = date_font.render(f"{d.day:02d}", True, P["ACCENT"])
+                tx = lat_x + cc * pitch
+                ty = lat_y + rr * pitch
+                blits.append((
+                    d, ds,
+                    tx + (DASH_MINI_SIZE - ds.get_width()) // 2,
+                    ty + (DASH_MINI_SIZE - ds.get_height()) // 2,
+                    tx, ty,
+                ))
+        return blits
+
+    if dashboard_mode:
+        DATE_PROBE_SIZE = 60
+        date_font = _make_dash_clock_font(DATE_PROBE_SIZE)
+        avail = DASH_MINI_SIZE - 2 * HL_INSET
+        probe_w, probe_h = date_font.size("88")
+        scale = min(avail / probe_w, avail / probe_h)
+        if abs(scale - 1.0) > 0.05:
+            date_font = _make_dash_clock_font(int(DATE_PROBE_SIZE * scale))
+        cal_anchor_date = _calendar_anchor(_dt.date.today())
+        date_blits = _build_date_blits(cal_anchor_date)
     ui_font = pygame.font.SysFont(UBUNTU_STACK, DASH_UI_FONT_SIZE)
     # City label sits inline with the now-larger temp — keep it small.
     city_font = pygame.font.SysFont(UBUNTU_STACK, DASH_LABEL_FONT_SIZE)
@@ -935,6 +1074,55 @@ def main():
                               y + (row_h - hex_surf.get_height()) // 2))
             y += row_h + ROW_GAP
         col_x += col_widths[i] + COL_GAP
+
+    # Compact palette strip for the dashboard header — single row of
+    # theme labels + coloured slot dots, replaces the tall two-column
+    # design_surf for header-strip usage. (design_surf is still built
+    # above because lock mode renders it inside the identity tile.)
+    PAL_DOT_R = 5
+    PAL_DOT_GAP = 5
+    PAL_LABEL_GAP = 8
+    PAL_THEME_GAP = 18
+    theme_label_surfs = {tk: ui_font.render(tk, True, P["MUTED"])
+                         for tk in THEME_KEYS}
+    pal_strip_h = max(theme_label_surfs[THEME_KEYS[0]].get_height(),
+                      PAL_DOT_R * 2)
+    pal_chunk_w = [
+        (theme_label_surfs[tk].get_width() + PAL_LABEL_GAP
+         + len(SLOTS) * (PAL_DOT_R * 2)
+         + (len(SLOTS) - 1) * PAL_DOT_GAP)
+        for tk in THEME_KEYS
+    ]
+    pal_strip_w = (sum(pal_chunk_w)
+                   + PAL_THEME_GAP * (len(THEME_KEYS) - 1))
+    palette_strip_surf = pygame.Surface(
+        (pal_strip_w, pal_strip_h), pygame.SRCALPHA)
+    pal_x = 0
+    for ti, tk in enumerate(THEME_KEYS):
+        label = theme_label_surfs[tk]
+        palette_strip_surf.blit(
+            label, (pal_x, (pal_strip_h - label.get_height()) // 2))
+        pal_x += label.get_width() + PAL_LABEL_GAP
+        for si, slot in enumerate(SLOTS):
+            pygame.draw.circle(
+                palette_strip_surf, THEMES[tk][slot],
+                (pal_x + PAL_DOT_R, pal_strip_h // 2), PAL_DOT_R)
+            pal_x += PAL_DOT_R * 2
+            if si < len(SLOTS) - 1:
+                pal_x += PAL_DOT_GAP
+        if ti < len(THEME_KEYS) - 1:
+            pal_x += PAL_THEME_GAP
+
+    # Small bold sans for event-summary labels rendered inside date
+    # tiles in calendar view. Coloured per-event by the calendar's tint.
+    event_font = pygame.font.SysFont(SANS_STACK, 14, bold=True)
+    # Cache rendered event-label surfaces keyed by (text, color) so
+    # the per-frame render in calendar view doesn't pay font.render
+    # cost on every tile every frame. Reset whenever the calendar
+    # thread bumps the events_version counter.
+    event_label_cache = {}
+    events_seen_version = -1
+
     # Pre-render the keyboard hint pieces. Bottom-row only: Ctrl Alt SPACE Alt Ctrl.
     kb_label_font = pygame.font.SysFont(SANS_STACK, KB_LABEL_FONT_SIZE,
                                         bold=True)
@@ -961,6 +1149,11 @@ def main():
     dayline_surf = None
     weather_key = ("", ())
     weather_surf = None
+    # Header-strip versions of dayline + temp, rendered at ui_font size
+    # rather than the focal 40/56 tiers — they live in the slim header
+    # row above the lattice and need to stay compact.
+    hdr_dayline_surf = None
+    hdr_temp_surf = None
     host_surf = ui_font.render(user_host, True, WHITE_TEXT)
     # Paddles + ball: clock-tone at ~50% alpha so they sit one visual
     # step back from the focal clock. SRCALPHA surfaces because the main
@@ -987,6 +1180,16 @@ def main():
     feedback = ""
     feedback_until = 0.0
 
+    # Dashboard view mode + tiny toggle button on the lattice outskirts.
+    # "clock" (default) = current dashboard view (clock + cal/weather/identity
+    # content). "calendar" = clock + cal0/cal1 text hidden, date numerals
+    # rendered at the top-right of each conceptual 3×2 group. Click the
+    # button to flip. Lock mode ignores view_mode entirely.
+    view_mode = "clock"
+    view_btn_r = 14
+    view_btn_cx = lat_x + lat_w - view_btn_r
+    view_btn_cy = lat_y - view_btn_r - 8
+
     clock = pygame.time.Clock()
     running = True
 
@@ -994,6 +1197,26 @@ def main():
         now = time.time()
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
+                # QUIT often arrives from Mutter via WM_DELETE_WINDOW
+                # (e.g. multi-monitor drag corruption, alt-F4). Log
+                # mouse position + screen size so we can correlate
+                # next time the dashboard "crashes" out of view.
+                try:
+                    mx, my = pygame.mouse.get_pos()
+                except Exception:
+                    mx, my = -1, -1
+                sw_log = sh_log = -1
+                try:
+                    if screen is not None:
+                        sw_log, sh_log = screen.get_size()
+                except Exception:
+                    pass
+                _log_lifecycle(
+                    "quit",
+                    f"mode={'dash' if dashboard_mode else 'lock'} "
+                    f"view={view_mode if dashboard_mode else 'n/a'} "
+                    f"mouse=({mx},{my}) "
+                    f"window=({sw_log},{sh_log})")
                 running = False
                 continue
             if dashboard_mode:
@@ -1009,7 +1232,27 @@ def main():
                         new_size, pygame.RESIZABLE)
                 elif ev.type == pygame.KEYDOWN and ev.key in (
                         pygame.K_ESCAPE, pygame.K_q):
+                    _log_lifecycle(
+                        "esc_or_q",
+                        f"key={pygame.key.name(ev.key)}")
                     running = False
+                elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                    # Translate screen-space click to logical (1920×1080)
+                    # coords, then hit-test the view-toggle circle.
+                    sw, sh = screen.get_size()
+                    sc = min(sw / LOGICAL_W, sh / LOGICAL_H)
+                    if sc > 0:
+                        ox = (sw - int(LOGICAL_W * sc)) // 2
+                        oy = (sh - int(LOGICAL_H * sc)) // 2
+                        lx = (ev.pos[0] - ox) / sc
+                        ly = (ev.pos[1] - oy) / sc
+                        dx = lx - view_btn_cx
+                        dy = ly - view_btn_cy
+                        # Slight slop on the hit area so the tiny button
+                        # is still easy to click.
+                        if dx * dx + dy * dy <= (view_btn_r + 6) ** 2:
+                            view_mode = ("calendar" if view_mode == "clock"
+                                         else "clock")
                 continue
             if ev.type != pygame.KEYDOWN:
                 continue
@@ -1091,14 +1334,21 @@ def main():
                        if len(cals_for_render) > 1 else None)
         faint = P["MAUVE"]
         # Blit the pre-rendered static layer, then layer the dynamic
-        # bits: cal tints (translucent over mini-tiles), flash overlays.
+        # bits. The cal0/cal1 calendar tints and the weather/identity
+        # group washes are CLOCK-VIEW ONLY — in calendar view they'd
+        # fight the per-group event/empty wash that runs further down.
         surf.blit(dash_static_surf, (0, 0))
-        if cal_color_0 is not None:
-            _tile_bg_rect(surf, *dash_content_rects["cal0"],
-                          cal_color_0, TILE_BG_ALPHA)
-        if cal_color_1 is not None:
-            _tile_bg_rect(surf, *dash_content_rects["cal1"],
-                          cal_color_1, TILE_BG_ALPHA)
+        clock_view = (not dashboard_mode) or view_mode == "clock"
+        if clock_view:
+            if cal_color_0 is not None:
+                _tile_bg_rect(surf, *dash_content_rects["cal0"],
+                              cal_color_0, TILE_BG_ALPHA)
+            if cal_color_1 is not None:
+                _tile_bg_rect(surf, *dash_content_rects["cal1"],
+                              cal_color_1, TILE_BG_ALPHA)
+            for key in ("weather", "identity"):
+                _tile_bg_rect(surf, *dash_content_rects[key],
+                              faint, TILE_BG_ALPHA)
         for i, (x, y, w, h) in enumerate(empty_tile_rects):
             if x <= bx <= x + w and y <= by <= y + h:
                 tile_flash[i] = now
@@ -1130,6 +1380,9 @@ def main():
             dayline_str = cur_dayline
             dayline_surf = dayline_font.render(dayline_str, True,
                                                P["MAUVE_FADE"])
+            # Header-strip version (compact, ui_font sized).
+            hdr_dayline_surf = ui_font.render(
+                dayline_str, True, P["MAUVE_FADE"])
         # Date line folds into the weather composite, so the composite
         # rebuilds whenever the date rolls over too.
         cur_weather_key = (_weather["text"], dayline_str)
@@ -1139,6 +1392,9 @@ def main():
             if temp_text:
                 INLINE_GAP = 12  # horizontal gap between temp ↔ city
                 temp_surf = dash_temp_font.render(
+                    temp_text, True, P["AUBURN"])
+                # Header-strip temp (compact, ui_font sized).
+                hdr_temp_surf = ui_font.render(
                     temp_text, True, P["AUBURN"])
                 row_tc = [temp_surf]
                 if city_surf is not None:
@@ -1168,86 +1424,172 @@ def main():
                     x += s.get_width() + INLINE_GAP
             else:
                 weather_surf = None
+                hdr_temp_surf = None
 
         # Clock floats over its lattice region; colon pinned to the
         # central lattice column (= rect centre x), digits spread
-        # proportionally around it.
-        cx, cy, cw, ch = dash_content_rects["clock"]
-        center_x = cx + cw // 2
-        surf.blit(clock_surf,
-                  (center_x - clock_colon_offset,
-                   cy + (ch - clock_surf.get_height()) // 2))
+        # proportionally around it. Hidden in calendar view so the
+        # date numerals own the lattice without focal competition.
+        if not dashboard_mode or view_mode == "clock":
+            cx, cy, cw, ch = dash_content_rects["clock"]
+            center_x = cx + cw // 2
+            surf.blit(clock_surf,
+                      (center_x - clock_colon_offset,
+                       cy + (ch - clock_surf.get_height()) // 2))
 
         col0_text_x = dash_content_rects["cal0"][0] + TILE_INSET
         _cy = lambda k: (dash_content_rects[k][1]
                          + dash_content_rects[k][3] // 2)
 
-        # Weather composite (with DATE in dashboard mode), flush-left.
-        if weather_surf is not None:
-            cy = _cy("weather")
-            surf.blit(weather_surf,
-                      (col0_text_x, cy - weather_surf.get_height() // 2))
+        # (Lock mode previously rendered the focal weather composite
+        # into the weather tile and the user@host + 2-column design
+        # chip into the identity tile here. Both moved out: the header
+        # strip above the lattice carries the weather + identity now,
+        # and the 4-day outlook fills the tile interiors.)
 
-        # Identity + design chip — two lines: user@host above the
-        # design profile (theme + key hexes).
-        nc_y = _cy("identity")
-        row_gap = 16
-        chip_h = host_surf.get_height() + row_gap + design_surf.get_height()
-        host_y = nc_y - chip_h // 2
-        design_y = host_y + host_surf.get_height() + row_gap
-        left_x = col0_text_x
-        surf.blit(host_surf, (left_x, host_y))
-        surf.blit(design_surf, (left_x, design_y))
+        # 4-day outlook on the four left content tiles
+        # (cal0/cal1/weather/identity = tomorrow → today+4). Renders in
+        # lock mode AND in dashboard clock view. Dashboard calendar
+        # view skips this — the date grid carries event info visually.
+        if not dashboard_mode or view_mode == "clock":
+            today = _dt.date.today()
+            by_date_now = _events.get("by_date", {})
+            OUTLOOK_LABEL_MAX = 18
+            OUTLOOK_MAX_EVENTS = 5
+            outlook_keys = ("cal0", "cal1", "weather", "identity")
+            for i, key in enumerate(outlook_keys):
+                day = today + _dt.timedelta(days=i + 1)
+                tile_x, tile_y, _tw, _th = dash_content_rects[key]
+                text_x = tile_x + TILE_INSET
+                text_y = tile_y + 16
+                day_label = day.strftime("%a %d %b").upper()
+                day_surf = ui_font.render(
+                    day_label, True, P["MAUVE_FADE"])
+                surf.blit(day_surf, (text_x, text_y))
+                text_y += day_surf.get_height() + 6
+                evs = sorted(
+                    by_date_now.get(day, []),
+                    key=lambda e: (e[3] is None, e[3] or ""))
+                for color, _nm, summary, time_str in evs[:OUTLOOK_MAX_EVENTS]:
+                    prefix = f"{time_str} " if time_str else ""
+                    text = (prefix + (summary or "")
+                            ).upper()[:OUTLOOK_LABEL_MAX]
+                    line_color = color or WHITE_TEXT
+                    line_surf = ui_font.render(text, True, line_color)
+                    surf.blit(line_surf, (text_x, text_y))
+                    text_y += line_surf.get_height() + 2
+                extra = len(evs) - OUTLOOK_MAX_EVENTS
+                if extra > 0:
+                    more_surf = ui_font.render(
+                        f"+{extra} MORE", True, P["MUTED"])
+                    surf.blit(more_surf, (text_x, text_y))
 
-        # Per-calendar chips — each pinned to its assigned cell. Name is
-        # rendered in the calendar's tint (matches the frame colour). If
-        # an event exists, NEXT / time / summary stack underneath.
-        cal_cells = [(0, 0), (0, 1)]
-        for i, (col, row) in enumerate(cal_cells):
-            if i >= len(cals_for_render):
-                continue
-            cal = cals_for_render[i]
-            name_color = cal.get("color") or P["MAUVE"]
-            name_surf = ui_font.render(
-                cal["name"].upper(), True, name_color)
-            time_surf = None
-            location_surf = None
-            summary_surf = None
-            if cal["next"]:
-                local_start = cal["next"]["start"].astimezone()
-                time_text = local_start.strftime(
-                    "%a %d %b | %H:%M").upper()
-                summary_text = cal["next"]["summary"].upper()[:EVENT_LABEL_MAX]
-                time_surf = ui_font.render(
-                    time_text, True, WHITE_TEXT)
-                summary_surf = ui_font.render(
-                    summary_text, True, WHITE_TEXT)
-                loc_text = (cal["next"].get("location", "")
-                            .upper()[:EVENT_LABEL_MAX])
-                if loc_text:
-                    location_surf = ui_font.render(
-                        loc_text, True, WHITE_TEXT)
-            # Each row is a list of surfs laid left-to-right; row height
-            # = max of the surfs in it. First row combines the cal name
-            # with " / NEXT" so the header sits inline with the title.
-            if time_surf is None:
-                rows = [[name_surf]]
+        # Calendar view overlay: blit the rolling date numerals at
+        # their top-right-of-group anchor positions, plus a stack of
+        # event-summary labels below each date for every event on that
+        # day. Labels are coloured by the calendar's tint (Jog =
+        # pistachio, TT = mango per config) and truncated to fit the
+        # 92px mini-tile width.
+        if dashboard_mode and view_mode == "calendar":
+            # Rebuild date_blits on day rollover so the window stays
+            # anchored on the current/upcoming Monday.
+            cur_anchor = _calendar_anchor(_dt.date.today())
+            if cur_anchor != cal_anchor_date:
+                cal_anchor_date = cur_anchor
+                date_blits = _build_date_blits(cal_anchor_date)
+            # Invalidate the event-label cache when the calendar fetcher
+            # publishes a new version.
+            cur_ver = _events.get("version", 0)
+            if cur_ver != events_seen_version:
+                events_seen_version = cur_ver
+                event_label_cache.clear()
+            by_date = _events.get("by_date", {})
+            # 3×2 group wash behind each date tile: mauve for event
+            # days (matches the existing baked-in wash on the left
+            # column's weather/identity tiles), bg-tone for empty days
+            # so they recede. Pass runs first so the date numerals +
+            # event labels render on top.
+            GROUP_W_PX = 3 * DASH_MINI_SIZE + 2 * DASH_MINI_GAP
+            GROUP_H_PX = 2 * DASH_MINI_SIZE + 1 * DASH_MINI_GAP
+            for d, _ds, _dxp, _dyp, tx, ty in date_blits:
+                has_events = bool(by_date.get(d))
+                wash = P["MAUVE"] if has_events else P["BG"]
+                _tile_bg_rect(surf, tx - 2 * pitch, ty,
+                              GROUP_W_PX, GROUP_H_PX,
+                              wash, TILE_BG_ALPHA)
+
+            MAX_LABELS_PER_TILE = 4
+            MAX_CHARS = 11        # roughly what fits at 14px bold sans
+            LABEL_W_MAX = DASH_MINI_SIZE - 6
+            for d, ds, dxp, dyp, tx, ty in date_blits:
+                surf.blit(ds, (dxp, dyp))
+                events_today = by_date.get(d, [])
+                if not events_today:
+                    continue
+                text_y = dyp + ds.get_height() + 2
+                for color, nm, summary, _ts in events_today[:MAX_LABELS_PER_TILE]:
+                    raw = (summary or nm).upper()[:MAX_CHARS]
+                    label_color = color or P["MUTED"]
+                    cache_key = (raw, label_color)
+                    label = event_label_cache.get(cache_key)
+                    if label is None:
+                        label = event_font.render(raw, True, label_color)
+                        event_label_cache[cache_key] = label
+                    if label.get_width() > LABEL_W_MAX:
+                        # Fallback for unusually wide glyphs at small char
+                        # budgets — shouldn't normally fire.
+                        label = pygame.transform.scale(
+                            label,
+                            (LABEL_W_MAX, label.get_height()))
+                    surf.blit(
+                        label,
+                        (tx + (DASH_MINI_SIZE - label.get_width()) // 2,
+                         text_y))
+                    text_y += label.get_height() + 1
+                    if text_y + label.get_height() > ty + DASH_MINI_SIZE:
+                        break  # ran out of vertical space
+
+        # Header strip above the lattice — same in both modes.
+        # user@host + palette swatches on the left, weather (dayline
+        # + temp + city) right-aligned. Dashboard right-edge stops
+        # short of the view-toggle button; lock mode has no toggle so
+        # the right edge runs to the lattice edge.
+        HDR_GAP = 16
+        hdr_y = view_btn_cy
+        hx = lat_x
+        surf.blit(host_surf,
+                  (hx, hdr_y - host_surf.get_height() // 2))
+        hx += host_surf.get_width() + HDR_GAP
+        surf.blit(palette_strip_surf,
+                  (hx, hdr_y - palette_strip_surf.get_height() // 2))
+        if dashboard_mode:
+            right_max = view_btn_cx - view_btn_r - 24
+        else:
+            right_max = lat_x + lat_w
+        hdr_chunks = [s for s in (hdr_dayline_surf,
+                                  hdr_temp_surf,
+                                  city_surf) if s is not None]
+        if hdr_chunks:
+            right_w = (sum(s.get_width() for s in hdr_chunks)
+                       + HDR_GAP * (len(hdr_chunks) - 1))
+            cur_x = right_max - right_w
+            for s in hdr_chunks:
+                surf.blit(s, (cur_x, hdr_y - s.get_height() // 2))
+                cur_x += s.get_width() + HDR_GAP
+
+        # Tiny view-toggle button on the lattice outskirts (top-right).
+        # Filled accent dot when clock view is active; outline-only ring
+        # when calendar view is active. Click area is slightly larger
+        # than the visible circle (see event handler) so it's still
+        # easy to hit.
+        if dashboard_mode:
+            if view_mode == "clock":
+                pygame.draw.circle(surf, P["ACCENT"],
+                                   (view_btn_cx, view_btn_cy), view_btn_r)
             else:
-                rows = [[name_surf, event_header_surf], [time_surf]]
-                if location_surf is not None:
-                    rows.append([location_surf])
-                rows.append([summary_surf])
-            row_heights = [max(s.get_height() for s in r) for r in rows]
-            stacked_h = sum(row_heights) + 4 * (len(rows) - 1)
-            cy = _cy("cal0" if i == 0 else "cal1")
-            left_x = col0_text_x
-            y = cy - stacked_h // 2
-            for row, rh in zip(rows, row_heights):
-                x = left_x
-                for s in row:
-                    surf.blit(s, (x, y + (rh - s.get_height()) // 2))
-                    x += s.get_width()
-                y += rh + 4
+                pygame.draw.circle(surf, P["ACCENT"],
+                                   (view_btn_cx, view_btn_cy),
+                                   view_btn_r, 2)
 
         surf.blit(paddle_surf,
                   (PADDLE_MARGIN, int(pl - PADDLE_H / 2)))
