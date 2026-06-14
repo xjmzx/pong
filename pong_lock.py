@@ -716,11 +716,45 @@ def _fetch_calendars_once():
                         time_str = None
                     else:
                         time_str = start_dt.astimezone().strftime("%H:%M")
+                    # Multi-day expansion: an OFF block on a TT timetable
+                    # or a multi-day holiday on any calendar lands on
+                    # every spanned date, not just the start. iCal DTEND
+                    # is exclusive for all-day events and inclusive
+                    # (datetime-wise) for timed events.
+                    dtend_obj = ev.get("DTEND")
+                    if dtend_obj is not None:
+                        dtend_raw = dtend_obj.dt
+                        if (isinstance(dtend_raw, _dt.date)
+                                and not isinstance(dtend_raw, _dt.datetime)):
+                            end_local_date = (dtend_raw
+                                              - _dt.timedelta(days=1))
+                        else:
+                            if dtend_raw.tzinfo is None:
+                                dtend_raw = dtend_raw.replace(
+                                    tzinfo=_dt.timezone.utc)
+                            end_local = dtend_raw.astimezone()
+                            end_local_date = end_local.date()
+                            # Events that end exactly at midnight don't
+                            # extend into that day.
+                            if (end_local.time() == _dt.time(0, 0)
+                                    and end_local_date > local_date):
+                                end_local_date -= _dt.timedelta(days=1)
+                    else:
+                        end_local_date = local_date
+                    if end_local_date < local_date:
+                        end_local_date = local_date
                     # Per-date index: include all events in the window
                     # (past and future) so the calendar view shows the
-                    # full picture of the visible 4 weeks.
-                    by_date.setdefault(local_date, []).append(
-                        (color, name, summary, time_str))
+                    # full picture of the visible 4 weeks. Continuation
+                    # days clear time_str so a fictional "09:00" doesn't
+                    # appear on day 2+ of a multi-day timed event.
+                    d_cursor = local_date
+                    while d_cursor <= end_local_date:
+                        entry_time = (time_str
+                                      if d_cursor == local_date else None)
+                        by_date.setdefault(d_cursor, []).append(
+                            (color, name, summary, entry_time))
+                        d_cursor += _dt.timedelta(days=1)
                     # Next event: future only, for clock-view chip.
                     if start_dt >= now:
                         if (next_event is None
@@ -731,6 +765,13 @@ def _fetch_calendars_once():
             except Exception:
                 pass  # per-calendar failure; still surface the colour+name
         results.append({"name": name, "color": color, "next": next_event})
+    # Order each day's events: all-day context first (OFF days, holidays
+    # — "this day is X"), then timed events chronologically. Sorted once
+    # here so every consumer (calendar view date tiles, 4-day outlook)
+    # sees the same order without re-sorting per frame.
+    for d_key in by_date:
+        by_date[d_key].sort(
+            key=lambda e: (e[3] is not None, e[3] or ""))
     _events["by_calendar"] = results
     _events["by_date"] = by_date
     _events["version"] = _events.get("version", 0) + 1
@@ -1533,8 +1574,17 @@ def main():
                 events_today = by_date.get(d, [])
                 if not events_today:
                     continue
+                # Reserve the last visible slot for "+N" when total
+                # events exceed the visible cap, so the overflow count
+                # is always visible.
+                total = len(events_today)
+                if total > MAX_LABELS_PER_TILE:
+                    show_count = MAX_LABELS_PER_TILE - 1
+                else:
+                    show_count = total
                 text_y = dyp + ds.get_height() + 2
-                for color, nm, summary, _ts in events_today[:MAX_LABELS_PER_TILE]:
+                drawn = 0
+                for color, nm, summary, _ts in events_today[:show_count]:
                     raw = (summary or nm).upper()[:MAX_CHARS]
                     label_color = color or P["MUTED"]
                     cache_key = (raw, label_color)
@@ -1548,13 +1598,31 @@ def main():
                         label = pygame.transform.scale(
                             label,
                             (LABEL_W_MAX, label.get_height()))
+                    if (drawn > 0
+                            and text_y + label.get_height()
+                            > ty + DASH_MINI_SIZE):
+                        break  # no room for this label
                     surf.blit(
                         label,
                         (tx + (DASH_MINI_SIZE - label.get_width()) // 2,
                          text_y))
                     text_y += label.get_height() + 1
-                    if text_y + label.get_height() > ty + DASH_MINI_SIZE:
-                        break  # ran out of vertical space
+                    drawn += 1
+                leftover = total - drawn
+                if leftover > 0:
+                    more_raw = f"+{leftover}"
+                    more_key = (more_raw, P["MUTED"])
+                    more_label = event_label_cache.get(more_key)
+                    if more_label is None:
+                        more_label = event_font.render(
+                            more_raw, True, P["MUTED"])
+                        event_label_cache[more_key] = more_label
+                    if text_y + more_label.get_height() <= ty + DASH_MINI_SIZE:
+                        surf.blit(
+                            more_label,
+                            (tx + (DASH_MINI_SIZE
+                                   - more_label.get_width()) // 2,
+                             text_y))
 
         # Header strip above the lattice — same in both modes. Fixed
         # lattice-aligned anchors:
