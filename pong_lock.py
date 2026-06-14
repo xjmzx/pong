@@ -1084,17 +1084,21 @@ def main():
                 ds = date_font.render(f"{d.day:02d}", True, P["ACCENT"])
                 tx = lat_x + cc * pitch
                 ty = lat_y + rr * pitch
+                # Date numeral: horizontally centred, top-aligned with a
+                # small inset. Previously centred vertically, which left
+                # only a sliver below for event labels and silently
+                # dropped a 2nd event on stacked days.
                 blits.append((
                     d, ds,
                     tx + (DASH_MINI_SIZE - ds.get_width()) // 2,
-                    ty + (DASH_MINI_SIZE - ds.get_height()) // 2,
+                    ty + 4,
                     tx, ty,
                 ))
         return blits
 
     # Both modes need the date font + initial date_blits — lock renders
     # the same M-F first-week strip the dashboard does.
-    DATE_PROBE_SIZE = 60
+    DATE_PROBE_SIZE = 30
     date_font = _make_dash_clock_font(DATE_PROBE_SIZE)
     avail = DASH_MINI_SIZE - 2 * HL_INSET
     probe_w, probe_h = date_font.size("88")
