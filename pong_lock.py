@@ -36,6 +36,11 @@ try:
 except (AttributeError, OSError):
     pass
 
+# Pong has no sound — keep SDL2 from spinning up Pulse mainloop +
+# audio threads. Must be set BEFORE pygame import so SDL picks it up
+# during its own init. Drops two threads + a few MB.
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
 import pygame
 from pygame._sdl2.video import Renderer, Texture, Window
 
@@ -867,6 +872,7 @@ def main():
 
     pygame.init()
     pygame.font.init()
+    _log_lifecycle("init", "stage=pygame_ready")
     start_weather_thread()
     _ensure_calendar_config()
     start_calendar_thread()
@@ -889,6 +895,7 @@ def main():
         rects = get_displays() or [(0, 0, 1920, 1080)]
         win, ren, tex, dst_rects = make_window(rects)
         pygame.event.set_grab(True)
+    _log_lifecycle("init", "stage=window_ready")
 
     surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
     # Pre-render the static visual layer once: bg + 120 mini-tile
@@ -904,6 +911,36 @@ def main():
     for (x, y, w, h) in empty_tile_rects:
         _tile_bg_rect(dash_static_surf, x, y, w, h,
                       _faint_static, TILE_BG_FAINT_ALPHA)
+    # Weekend-day side tiles: one mini-tile-wide column of 4 recessive
+    # fills on each side of the lattice, each spanning the height of a
+    # 3×2 calendar-week group so the weekend bracket reads as the
+    # full-week strip. Sit behind the paddles, purely aesthetic, no
+    # numerals, no outline. Horizontal alpha gradient: each side fades
+    # away from the lattice — the edge touching the grid is most
+    # opaque, the outer edge fades to transparent. Built as a rounded
+    # tile with a per-column alpha gradient multiplied in, so the
+    # corner curvature is preserved.
+    WEEKEND_H = 2 * DASH_MINI_SIZE + DASH_MINI_GAP
+    def _weekend_tile(fade_in):
+        tile = pygame.Surface((DASH_MINI_SIZE, WEEKEND_H), pygame.SRCALPHA)
+        pygame.draw.rect(tile, (*_faint_static, TILE_BG_FAINT_ALPHA),
+                         (0, 0, DASH_MINI_SIZE, WEEKEND_H),
+                         border_radius=HL_RADIUS)
+        grad = pygame.Surface((DASH_MINI_SIZE, WEEKEND_H), pygame.SRCALPHA)
+        for px in range(DASH_MINI_SIZE):
+            ratio = (px + 1) / DASH_MINI_SIZE
+            a = int(255 * (ratio if fade_in else 1 - ratio))
+            pygame.draw.line(grad, (255, 255, 255, a),
+                             (px, 0), (px, WEEKEND_H - 1))
+        tile.blit(grad, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        return tile
+    left_weekend = _weekend_tile(fade_in=True)
+    right_weekend = _weekend_tile(fade_in=False)
+    for wr in (0, 2, 4, 6):
+        wy = lat_y + wr * pitch
+        dash_static_surf.blit(left_weekend, (lat_x - pitch, wy))
+        dash_static_surf.blit(right_weekend,
+                              (lat_x + lat_w + DASH_MINI_GAP, wy))
     # Weather + identity group washes used to be baked in here, but
     # they fight the calendar-view per-group event/empty wash. They're
     # applied per-frame in clock view only further down.
@@ -922,6 +959,7 @@ def main():
     for key in ("cal0", "cal1", "weather", "identity"):
         _highlight_rect(dash_static_surf,
                         *dash_content_rects[key])
+    _log_lifecycle("init", "stage=static_built")
     flash_buf = pygame.Surface(
         (DASH_MINI_SIZE, DASH_MINI_SIZE), pygame.SRCALPHA)
     font = pygame.font.SysFont("monospace", 56)
@@ -1013,16 +1051,17 @@ def main():
                 ))
         return blits
 
-    if dashboard_mode:
-        DATE_PROBE_SIZE = 60
-        date_font = _make_dash_clock_font(DATE_PROBE_SIZE)
-        avail = DASH_MINI_SIZE - 2 * HL_INSET
-        probe_w, probe_h = date_font.size("88")
-        scale = min(avail / probe_w, avail / probe_h)
-        if abs(scale - 1.0) > 0.05:
-            date_font = _make_dash_clock_font(int(DATE_PROBE_SIZE * scale))
-        cal_anchor_date = _calendar_anchor(_dt.date.today())
-        date_blits = _build_date_blits(cal_anchor_date)
+    # Both modes need the date font + initial date_blits — lock renders
+    # the same M-F first-week strip the dashboard does.
+    DATE_PROBE_SIZE = 60
+    date_font = _make_dash_clock_font(DATE_PROBE_SIZE)
+    avail = DASH_MINI_SIZE - 2 * HL_INSET
+    probe_w, probe_h = date_font.size("88")
+    scale = min(avail / probe_w, avail / probe_h)
+    if abs(scale - 1.0) > 0.05:
+        date_font = _make_dash_clock_font(int(DATE_PROBE_SIZE * scale))
+    cal_anchor_date = _calendar_anchor(_dt.date.today())
+    date_blits = _build_date_blits(cal_anchor_date)
     ui_font = pygame.font.SysFont(UBUNTU_STACK, DASH_UI_FONT_SIZE)
     # City label sits inline with the now-larger temp — keep it small.
     city_font = pygame.font.SysFont(UBUNTU_STACK, DASH_LABEL_FONT_SIZE)
@@ -1087,31 +1126,26 @@ def main():
                          for tk in THEME_KEYS}
     pal_strip_h = max(theme_label_surfs[THEME_KEYS[0]].get_height(),
                       PAL_DOT_R * 2)
-    pal_chunk_w = [
-        (theme_label_surfs[tk].get_width() + PAL_LABEL_GAP
-         + len(SLOTS) * (PAL_DOT_R * 2)
-         + (len(SLOTS) - 1) * PAL_DOT_GAP)
-        for tk in THEME_KEYS
-    ]
-    pal_strip_w = (sum(pal_chunk_w)
-                   + PAL_THEME_GAP * (len(THEME_KEYS) - 1))
-    palette_strip_surf = pygame.Surface(
-        (pal_strip_w, pal_strip_h), pygame.SRCALPHA)
-    pal_x = 0
-    for ti, tk in enumerate(THEME_KEYS):
+    # Build a per-theme chunk so each (label + dots) can blit at its
+    # own x — the header strip anchors fizx and upleb to specific
+    # lattice-group columns rather than packing them side-by-side.
+    def _build_theme_chunk(tk):
         label = theme_label_surfs[tk]
-        palette_strip_surf.blit(
-            label, (pal_x, (pal_strip_h - label.get_height()) // 2))
-        pal_x += label.get_width() + PAL_LABEL_GAP
+        chunk_w = (label.get_width() + PAL_LABEL_GAP
+                   + len(SLOTS) * (PAL_DOT_R * 2)
+                   + (len(SLOTS) - 1) * PAL_DOT_GAP)
+        chunk = pygame.Surface((chunk_w, pal_strip_h), pygame.SRCALPHA)
+        chunk.blit(label, (0, (pal_strip_h - label.get_height()) // 2))
+        cx = label.get_width() + PAL_LABEL_GAP
         for si, slot in enumerate(SLOTS):
             pygame.draw.circle(
-                palette_strip_surf, THEMES[tk][slot],
-                (pal_x + PAL_DOT_R, pal_strip_h // 2), PAL_DOT_R)
-            pal_x += PAL_DOT_R * 2
+                chunk, THEMES[tk][slot],
+                (cx + PAL_DOT_R, pal_strip_h // 2), PAL_DOT_R)
+            cx += PAL_DOT_R * 2
             if si < len(SLOTS) - 1:
-                pal_x += PAL_DOT_GAP
-        if ti < len(THEME_KEYS) - 1:
-            pal_x += PAL_THEME_GAP
+                cx += PAL_DOT_GAP
+        return chunk
+    palette_chunk_surfs = {tk: _build_theme_chunk(tk) for tk in THEME_KEYS}
 
     # Small bold sans for event-summary labels rendered inside date
     # tiles in calendar view. Coloured per-event by the calendar's tint.
@@ -1192,6 +1226,7 @@ def main():
 
     clock = pygame.time.Clock()
     running = True
+    _log_lifecycle("init", "stage=loop_entered")
 
     while running:
         now = time.time()
@@ -1339,16 +1374,9 @@ def main():
         # fight the per-group event/empty wash that runs further down.
         surf.blit(dash_static_surf, (0, 0))
         clock_view = (not dashboard_mode) or view_mode == "clock"
-        if clock_view:
-            if cal_color_0 is not None:
-                _tile_bg_rect(surf, *dash_content_rects["cal0"],
-                              cal_color_0, TILE_BG_ALPHA)
-            if cal_color_1 is not None:
-                _tile_bg_rect(surf, *dash_content_rects["cal1"],
-                              cal_color_1, TILE_BG_ALPHA)
-            for key in ("weather", "identity"):
-                _tile_bg_rect(surf, *dash_content_rects[key],
-                              faint, TILE_BG_ALPHA)
+        # The cal0/cal1/weather/identity dynamic tile washes are gone
+        # in both modes — the M-F first-week strip (rendered further
+        # down) carries the calendar signal via per-day group washes.
         for i, (x, y, w, h) in enumerate(empty_tile_rects):
             if x <= bx <= x + w and y <= by <= y + h:
                 tile_flash[i] = now
@@ -1447,50 +1475,11 @@ def main():
         # strip above the lattice carries the weather + identity now,
         # and the 4-day outlook fills the tile interiors.)
 
-        # 4-day outlook on the four left content tiles
-        # (cal0/cal1/weather/identity = tomorrow → today+4). Renders in
-        # lock mode AND in dashboard clock view. Dashboard calendar
-        # view skips this — the date grid carries event info visually.
-        if not dashboard_mode or view_mode == "clock":
-            today = _dt.date.today()
-            by_date_now = _events.get("by_date", {})
-            OUTLOOK_LABEL_MAX = 18
-            OUTLOOK_MAX_EVENTS = 5
-            outlook_keys = ("cal0", "cal1", "weather", "identity")
-            for i, key in enumerate(outlook_keys):
-                day = today + _dt.timedelta(days=i + 1)
-                tile_x, tile_y, _tw, _th = dash_content_rects[key]
-                text_x = tile_x + TILE_INSET
-                text_y = tile_y + 16
-                day_label = day.strftime("%a %d %b").upper()
-                day_surf = ui_font.render(
-                    day_label, True, P["MAUVE_FADE"])
-                surf.blit(day_surf, (text_x, text_y))
-                text_y += day_surf.get_height() + 6
-                evs = sorted(
-                    by_date_now.get(day, []),
-                    key=lambda e: (e[3] is None, e[3] or ""))
-                for color, _nm, summary, time_str in evs[:OUTLOOK_MAX_EVENTS]:
-                    prefix = f"{time_str} " if time_str else ""
-                    text = (prefix + (summary or "")
-                            ).upper()[:OUTLOOK_LABEL_MAX]
-                    line_color = color or WHITE_TEXT
-                    line_surf = ui_font.render(text, True, line_color)
-                    surf.blit(line_surf, (text_x, text_y))
-                    text_y += line_surf.get_height() + 2
-                extra = len(evs) - OUTLOOK_MAX_EVENTS
-                if extra > 0:
-                    more_surf = ui_font.render(
-                        f"+{extra} MORE", True, P["MUTED"])
-                    surf.blit(more_surf, (text_x, text_y))
-
-        # Calendar view overlay: blit the rolling date numerals at
-        # their top-right-of-group anchor positions, plus a stack of
-        # event-summary labels below each date for every event on that
-        # day. Labels are coloured by the calendar's tint (Jog =
-        # pistachio, TT = mango per config) and truncated to fit the
-        # 92px mini-tile width.
-        if dashboard_mode and view_mode == "calendar":
+        # Calendar-style date strip — same rendering in both modes:
+        # full 5×4 rolling grid in dashboard calendar view; just the
+        # first M-F row in dashboard clock view AND lock mode, so the
+        # week-ahead reads the same wherever pong runs.
+        if True:
             # Rebuild date_blits on day rollover so the window stays
             # anchored on the current/upcoming Monday.
             cur_anchor = _calendar_anchor(_dt.date.today())
@@ -1504,6 +1493,11 @@ def main():
                 events_seen_version = cur_ver
                 event_label_cache.clear()
             by_date = _events.get("by_date", {})
+            # Clock view shows just the first M-F row of the rolling
+            # grid; calendar view shows all 4 weeks. Same rendering
+            # path either way — only the slice differs.
+            blits_to_render = (date_blits[:len(DATE_COLS)]
+                               if view_mode == "clock" else date_blits)
             # 3×2 group wash behind each date tile: mauve for event
             # days (matches the existing baked-in wash on the left
             # column's weather/identity tiles), bg-tone for empty days
@@ -1511,9 +1505,22 @@ def main():
             # event labels render on top.
             GROUP_W_PX = 3 * DASH_MINI_SIZE + 2 * DASH_MINI_GAP
             GROUP_H_PX = 2 * DASH_MINI_SIZE + 1 * DASH_MINI_GAP
-            for d, _ds, _dxp, _dyp, tx, ty in date_blits:
-                has_events = bool(by_date.get(d))
-                wash = P["MAUVE"] if has_events else P["BG"]
+            # Per-calendar wash priority: ant (flamingo) and Jog
+            # (pistachio) tint the group wash with their own colour so
+            # those days stand out individually; other event days use
+            # generic mauve; empty days recede to BG.
+            WASH_PRIORITY = ("ant", "Jog")
+            for d, _ds, _dxp, _dyp, tx, ty in blits_to_render:
+                evs = by_date.get(d, [])
+                wash = None
+                for cal_name in WASH_PRIORITY:
+                    hit = next((c for c, n, _s, _t in evs
+                                if n == cal_name), None)
+                    if hit is not None:
+                        wash = hit
+                        break
+                if wash is None:
+                    wash = P["MAUVE"] if evs else P["BG"]
                 _tile_bg_rect(surf, tx - 2 * pitch, ty,
                               GROUP_W_PX, GROUP_H_PX,
                               wash, TILE_BG_ALPHA)
@@ -1521,7 +1528,7 @@ def main():
             MAX_LABELS_PER_TILE = 4
             MAX_CHARS = 11        # roughly what fits at 14px bold sans
             LABEL_W_MAX = DASH_MINI_SIZE - 6
-            for d, ds, dxp, dyp, tx, ty in date_blits:
+            for d, ds, dxp, dyp, tx, ty in blits_to_render:
                 surf.blit(ds, (dxp, dyp))
                 events_today = by_date.get(d, [])
                 if not events_today:
@@ -1549,47 +1556,46 @@ def main():
                     if text_y + label.get_height() > ty + DASH_MINI_SIZE:
                         break  # ran out of vertical space
 
-        # Header strip above the lattice — same in both modes.
-        # user@host + palette swatches on the left, weather (dayline
-        # + temp + city) right-aligned. Dashboard right-edge stops
-        # short of the view-toggle button; lock mode has no toggle so
-        # the right edge runs to the lattice edge.
+        # Header strip above the lattice — same in both modes. Fixed
+        # lattice-aligned anchors:
+        #   * oobn@oobn identity flush left at lat_x
+        #   * fizx palette chunk left-aligned to the 2nd 3×2 group (col 3)
+        #   * upleb palette chunk left-aligned to the 4th 3×2 group (col 9)
+        #   * current date (dayline) centred on the lattice
+        #   * temp + city left-aligned to the 5th 3×2 group (col 12, Friday)
         HDR_GAP = 16
         hdr_y = view_btn_cy
-        hx = lat_x
         surf.blit(host_surf,
-                  (hx, hdr_y - host_surf.get_height() // 2))
-        hx += host_surf.get_width() + HDR_GAP
-        surf.blit(palette_strip_surf,
-                  (hx, hdr_y - palette_strip_surf.get_height() // 2))
-        if dashboard_mode:
-            right_max = view_btn_cx - view_btn_r - 24
-        else:
-            right_max = lat_x + lat_w
-        hdr_chunks = [s for s in (hdr_dayline_surf,
-                                  hdr_temp_surf,
-                                  city_surf) if s is not None]
-        if hdr_chunks:
-            right_w = (sum(s.get_width() for s in hdr_chunks)
-                       + HDR_GAP * (len(hdr_chunks) - 1))
-            cur_x = right_max - right_w
-            for s in hdr_chunks:
-                surf.blit(s, (cur_x, hdr_y - s.get_height() // 2))
-                cur_x += s.get_width() + HDR_GAP
+                  (lat_x, hdr_y - host_surf.get_height() // 2))
+        fizx_chunk = palette_chunk_surfs["fizx"]
+        upleb_chunk = palette_chunk_surfs["upleb"]
+        surf.blit(fizx_chunk,
+                  (lat_x + 3 * pitch,
+                   hdr_y - fizx_chunk.get_height() // 2))
+        surf.blit(upleb_chunk,
+                  (lat_x + 9 * pitch,
+                   hdr_y - upleb_chunk.get_height() // 2))
+        if hdr_dayline_surf is not None:
+            surf.blit(
+                hdr_dayline_surf,
+                (lat_x + lat_w // 2 - hdr_dayline_surf.get_width() // 2,
+                 hdr_y - hdr_dayline_surf.get_height() // 2))
+        weather_chunks = [s for s in (hdr_temp_surf, city_surf)
+                          if s is not None]
+        cur_x = lat_x + 12 * pitch
+        for s in weather_chunks:
+            surf.blit(s, (cur_x, hdr_y - s.get_height() // 2))
+            cur_x += s.get_width() + HDR_GAP
 
         # Tiny view-toggle button on the lattice outskirts (top-right).
-        # Filled accent dot when clock view is active; outline-only ring
-        # when calendar view is active. Click area is slightly larger
-        # than the visible circle (see event handler) so it's still
-        # easy to hit.
+        # Each state filled with its own logical hue: ACCENT for clock
+        # view (matches the focal clock tone), MAUVE for calendar view
+        # (matches the calendar-day group-wash tone). Click area is
+        # slightly larger than the visible circle (see event handler).
         if dashboard_mode:
-            if view_mode == "clock":
-                pygame.draw.circle(surf, P["ACCENT"],
-                                   (view_btn_cx, view_btn_cy), view_btn_r)
-            else:
-                pygame.draw.circle(surf, P["ACCENT"],
-                                   (view_btn_cx, view_btn_cy),
-                                   view_btn_r, 2)
+            btn_color = P["ACCENT"] if view_mode == "clock" else P["MAUVE"]
+            pygame.draw.circle(surf, btn_color,
+                               (view_btn_cx, view_btn_cy), view_btn_r)
 
         surf.blit(paddle_surf,
                   (PADDLE_MARGIN, int(pl - PADDLE_H / 2)))
