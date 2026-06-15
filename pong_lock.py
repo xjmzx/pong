@@ -187,6 +187,11 @@ TILE_INSET = 20                 # tile-edge → text-edge inset for L-aligned ch
 TILE_BG_ALPHA = 38              # ~15% of 255 — calendar-tint tile-bg wash
 TILE_BG_FAINT_ALPHA = 25        # ~10% of 255 — theme-mauve wash on plain tiles
 TILE_BG_INPUT_ALPHA = 12        # ~5% of 255 — input strip, lighter still
+# Day-focus boosts: today's group wash + ~20%, tomorrow's + ~10%, so
+# the eye lands on "now" first and "next" second without the rest of
+# the week fading too much.
+TILE_BG_TODAY_BOOST = 51        # +20% of 255 added to today's wash
+TILE_BG_TOMORROW_BOOST = 26     # +10% of 255 added to tomorrow's wash
 # Dashboard-only interaction: when the pong ball's centre enters one of
 # the sub-divided empty tiles, that tile's alpha is bumped briefly and
 # decays back to TILE_BG_FAINT_ALPHA. Pure visual cue for now —
@@ -1581,6 +1586,7 @@ def main():
             # those days stand out individually; other event days use
             # generic mauve; empty days recede to BG.
             WASH_PRIORITY = ("ant", "Jog")
+            tomorrow_date = cur_today + _dt.timedelta(days=1)
             for d, _ds, _dxp, _dyp, tx, ty in blits_to_render:
                 evs = by_date.get(d, [])
                 wash = None
@@ -1592,9 +1598,18 @@ def main():
                         break
                 if wash is None:
                     wash = P["MAUVE"] if evs else P["BG"]
+                # Boost today, lesser boost tomorrow, so the eye lands
+                # on now → next first; the rest of the week reads as
+                # context at the baseline wash alpha.
+                if d == cur_today:
+                    a = min(255, TILE_BG_ALPHA + TILE_BG_TODAY_BOOST)
+                elif d == tomorrow_date:
+                    a = min(255, TILE_BG_ALPHA + TILE_BG_TOMORROW_BOOST)
+                else:
+                    a = TILE_BG_ALPHA
                 _tile_bg_rect(surf, tx - 2 * pitch, ty,
                               GROUP_W_PX, GROUP_H_PX,
-                              wash, TILE_BG_ALPHA)
+                              wash, a)
 
             MAX_LABELS_PER_TILE = 4
             MAX_CHARS = 11        # roughly what fits at 14px bold sans
