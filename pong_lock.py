@@ -1076,12 +1076,15 @@ def main():
             return today - _dt.timedelta(days=wd)
         return today + _dt.timedelta(days=7 - wd)
 
-    def _build_date_blits(anchor):
+    def _build_date_blits(anchor, today):
         blits = []
         for ri, rr in enumerate(DATE_ROWS):
             for ci, cc in enumerate(DATE_COLS):
                 d = anchor + _dt.timedelta(days=ri * 7 + ci)
-                ds = date_font.render(f"{d.day:02d}", True, P["ACCENT"])
+                # Today's numeral renders white in both header dayline
+                # and calendar tile, so the eye pairs them.
+                num_color = WHITE_TEXT if d == today else P["ACCENT"]
+                ds = date_font.render(f"{d.day:02d}", True, num_color)
                 tx = lat_x + cc * pitch
                 ty = lat_y + rr * pitch
                 # Date numeral: horizontally centred, top-aligned with a
@@ -1103,8 +1106,9 @@ def main():
     # tile — that would defeat the layout.
     DATE_FONT_SIZE = 30
     date_font = _make_dash_clock_font(DATE_FONT_SIZE)
-    cal_anchor_date = _calendar_anchor(_dt.date.today())
-    date_blits = _build_date_blits(cal_anchor_date)
+    last_today = _dt.date.today()
+    cal_anchor_date = _calendar_anchor(last_today)
+    date_blits = _build_date_blits(cal_anchor_date, last_today)
     ui_font = pygame.font.SysFont(UBUNTU_STACK, DASH_UI_FONT_SIZE)
     # City label sits inline with the now-larger temp — keep it small.
     city_font = pygame.font.SysFont(UBUNTU_STACK, DASH_LABEL_FONT_SIZE)
@@ -1449,11 +1453,30 @@ def main():
         cur_dayline = time.strftime("%a %d %b").upper()
         if cur_dayline != dayline_str:
             dayline_str = cur_dayline
-            dayline_surf = dayline_font.render(dayline_str, True,
-                                               P["MAUVE_FADE"])
+            # Render "MON 15 JUN" as three glyph runs so the date
+            # numeral can be white (echoing today's white tile in the
+            # calendar) while the day-of-week and month name stay in
+            # the recessive MAUVE_FADE.
+            def _split_dayline_render(font_):
+                parts = dayline_str.split(" ", 2)
+                if len(parts) != 3:
+                    return font_.render(
+                        dayline_str, True, P["MAUVE_FADE"])
+                dow = font_.render(parts[0] + " ", True, P["MAUVE_FADE"])
+                num = font_.render(parts[1], True, WHITE_TEXT)
+                mon = font_.render(" " + parts[2], True, P["MAUVE_FADE"])
+                w = dow.get_width() + num.get_width() + mon.get_width()
+                h = max(dow.get_height(), num.get_height(),
+                        mon.get_height())
+                comp = pygame.Surface((w, h), pygame.SRCALPHA)
+                x = 0
+                for s in (dow, num, mon):
+                    comp.blit(s, (x, (h - s.get_height()) // 2))
+                    x += s.get_width()
+                return comp
+            dayline_surf = _split_dayline_render(dayline_font)
             # Header-strip version (compact, ui_font sized).
-            hdr_dayline_surf = ui_font.render(
-                dayline_str, True, P["MAUVE_FADE"])
+            hdr_dayline_surf = _split_dayline_render(ui_font)
         # Date line folds into the weather composite, so the composite
         # rebuilds whenever the date rolls over too.
         cur_weather_key = (_weather["text"], dayline_str)
@@ -1525,10 +1548,15 @@ def main():
         if True:
             # Rebuild date_blits on day rollover so the window stays
             # anchored on the current/upcoming Monday.
-            cur_anchor = _calendar_anchor(_dt.date.today())
-            if cur_anchor != cal_anchor_date:
+            cur_today = _dt.date.today()
+            cur_anchor = _calendar_anchor(cur_today)
+            # Rebuild on either anchor flip (week rollover) or just the
+            # date rolling forward inside the same workweek — the latter
+            # is what moves the white "today" highlight Tue→Wed→Thu→Fri.
+            if cur_anchor != cal_anchor_date or cur_today != last_today:
                 cal_anchor_date = cur_anchor
-                date_blits = _build_date_blits(cal_anchor_date)
+                last_today = cur_today
+                date_blits = _build_date_blits(cal_anchor_date, last_today)
             # Invalidate the event-label cache when the calendar fetcher
             # publishes a new version.
             cur_ver = _events.get("version", 0)
