@@ -1097,14 +1097,12 @@ def main():
         return blits
 
     # Both modes need the date font + initial date_blits — lock renders
-    # the same M-F first-week strip the dashboard does.
-    DATE_PROBE_SIZE = 30
-    date_font = _make_dash_clock_font(DATE_PROBE_SIZE)
-    avail = DASH_MINI_SIZE - 2 * HL_INSET
-    probe_w, probe_h = date_font.size("88")
-    scale = min(avail / probe_w, avail / probe_h)
-    if abs(scale - 1.0) > 0.05:
-        date_font = _make_dash_clock_font(int(DATE_PROBE_SIZE * scale))
+    # the same M-F first-week strip the dashboard does. Fixed size: we
+    # want the date small and top-anchored so the bulk of the tile is
+    # available for stacked event labels. No auto-rescale to fill the
+    # tile — that would defeat the layout.
+    DATE_FONT_SIZE = 30
+    date_font = _make_dash_clock_font(DATE_FONT_SIZE)
     cal_anchor_date = _calendar_anchor(_dt.date.today())
     date_blits = _build_date_blits(cal_anchor_date)
     ui_font = pygame.font.SysFont(UBUNTU_STACK, DASH_UI_FONT_SIZE)
