@@ -1,5 +1,9 @@
 DESTDIR =
-PREFIX = /usr/local
+# User install by default — no sudo, lands under ~/.local/{bin,share}
+# which is already on PATH and on XDG_DATA_DIRS on a stock Ubuntu user
+# session. Override (e.g. PREFIX=/usr/local) for a system-wide install,
+# or use `make deb` which forces PREFIX=/usr internally.
+PREFIX = $(HOME)/.local
 
 # Debian packaging — `make deb` stages the install tree under build/
 # and emits dist/pong_$(VERSION)_all.deb. Override MAINTAINER if you
@@ -82,7 +86,7 @@ help:
 	@echo "  help       - Print this help"
 	@echo ""
 	@echo "Variables:"
-	@echo "  PREFIX     - Install prefix (default: /usr/local)"
-	@echo "             User install: make install PREFIX=\$$HOME/.local"
+	@echo "  PREFIX     - Install prefix (default: \$$HOME/.local)"
+	@echo "             System install: sudo make install PREFIX=/usr/local"
 	@echo "  VERSION    - Package version (default: $(VERSION))"
 	@echo "  MAINTAINER - .deb maintainer string"
