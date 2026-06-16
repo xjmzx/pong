@@ -1581,11 +1581,12 @@ def main():
             # event labels render on top.
             GROUP_W_PX = 3 * DASH_MINI_SIZE + 2 * DASH_MINI_GAP
             GROUP_H_PX = 2 * DASH_MINI_SIZE + 1 * DASH_MINI_GAP
-            # Per-calendar wash priority: ant (flamingo) and Jog
-            # (pistachio) tint the group wash with their own colour so
-            # those days stand out individually; other event days use
-            # generic mauve; empty days recede to BG.
-            WASH_PRIORITY = ("ant", "Jog")
+            # Per-calendar wash priority: Off (peacock), ant (flamingo)
+            # and Jog (pistachio) tint the group wash with their own
+            # colour so those days stand out individually; other event
+            # days use generic mauve; empty days recede to BG. Off goes
+            # first so an OFF day overrides anything overlapping.
+            WASH_PRIORITY = ("Off", "ant", "Jog")
             tomorrow_date = cur_today + _dt.timedelta(days=1)
             for d, _ds, _dxp, _dyp, tx, ty in blits_to_render:
                 evs = by_date.get(d, [])
