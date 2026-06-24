@@ -16,7 +16,7 @@ Build the package once, then `apt install` it like any other system package:
 
 ```
 make deb
-sudo apt install ./dist/pong_0.4.3_all.deb
+sudo apt install ./dist/pong_0.4.4_all.deb
 ```
 
 The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
@@ -87,7 +87,7 @@ The spec lives in [`packaging/windows/`](packaging/windows/) and shares the `--d
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the release assets (macOS Apple-Silicon `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed. Intel Macs aren't built in CI (macos-13 runners are scarce/deprecated) — build locally with `make dmg` or run from source.
 
 ```
-git tag v0.4.3 && git push origin v0.4.3
+git tag v0.4.4 && git push origin v0.4.4
 ```
 
 The tag drives the version baked into the artifact filenames and the macOS bundle's `Info.plist`. Run the workflow manually (Actions → *Release dashboard apps* → *Run workflow*) to dry-run the builds without cutting a release.
@@ -116,7 +116,7 @@ Pass `--dashboard` to run the same dashboard as an ordinary windowed app — use
 pong --dashboard
 ```
 
-The `.deb` install also ships a separate "Pong Dashboard" entry in *Show Applications*, so the dashboard can be launched from the app grid like any other app. The window is resizable (640×360 minimum), has a normal title bar, and quits on **Esc**, **Q**, or close. PAM is not used and `python3-pam` is not required for this mode. A separate single-instance lock at `~/.cache/pong_dash.lock` means a dashboard window can coexist with the lock variant if you ever want both running.
+The `.deb` install also ships a separate "Pong Dashboard" entry in *Show Applications*, so the dashboard can be launched from the app grid like any other app. The window is resizable (640×360 minimum), has a normal title bar, and quits on **Esc**, **Q**, or close. PAM is not used and `python3-pam` is not required for this mode. A separate single-instance lock (`dash.lock` in the per-OS cache dir — see [Portability](#portability-across-devices)) means a dashboard window can coexist with the lock variant if you ever want both running.
 
 The bottom-row input strip is rendered as an empty reserved tile in dashboard mode (no SPACE wake hint, no password prompt). Everything else — clock, day/date, calendars, weather, identity chip — renders exactly as in lock mode, including the dual fizx/upleb theme alternation.
 
@@ -231,7 +231,7 @@ Polling cadence:
 - `CALENDAR_REFRESH_SEC` — ICS fetch cadence (default 10 min)
 - `CALENDAR_LOOKAHEAD_DAYS` — only surface events within this window
 
-Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launches. Single-instance lock at `~/.cache/pong_lock.lock` prevents a second invocation while pong is already running.
+Lockout state persists in `lockout_state` (per-OS cache dir, see [Portability](#portability-across-devices)) across Ctrl+C and re-launches. The `lock.lock` single-instance lock prevents a second invocation while pong is already running.
 
 ## Failsafe
 
@@ -239,19 +239,23 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 
 ## Portability across devices
 
-Two separate trees, which currently resolve differently per OS:
+Two separate trees, each in its platform-native location (config = roamable user data, cache = machine-local ephemeral state). Both are per-machine and not synced.
 
-- **Config** (`calendars.json`, `theme.json`) — the per-OS *native* config dir listed above (macOS `~/Library/Application Support/pong`, Windows `%APPDATA%\pong`, Linux `~/.config/pong`). User-edited; per-machine, not synced.
-- **Runtime state** (locks, theme cache, crash/lifecycle log) — currently lands under **`~/.cache/`** on *every* platform, including macOS and Windows, where that's a non-native location pong creates in your home dir. None of it is portable; it's all regenerated per machine:
-  - `~/.cache/pong/crash.log` — crash + lifecycle log (all platforms)
-  - `~/.cache/pong_dash.lock` — dashboard single-instance lock (all platforms)
-  - `~/.cache/pong_lock_theme` — fizx/upleb theme-alternation cache (all platforms)
-  - `~/.cache/pong_lock.lock`, `~/.cache/pong_lock_state` — lock-mode single-instance + auth-cooloff state (**lock mode only**, i.e. Linux)
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| **Config** (`calendars.json`, `theme.json`) | `$XDG_CONFIG_HOME/pong` or `~/.config/pong` | `~/Library/Application Support/pong` | `%APPDATA%\pong` |
+| **Cache/state** (below) | `$XDG_CACHE_HOME/pong` or `~/.cache/pong` | `~/Library/Caches/pong` | `%LOCALAPPDATA%\pong` |
+
+The cache dir holds ephemeral runtime state, all regenerated per machine — nothing here is portable or worth backing up:
+- `crash.log` — crash + lifecycle log (all platforms)
+- `dash.lock` — dashboard single-instance lock (all platforms)
+- `theme` — fizx/upleb theme-alternation marker (all platforms)
+- `lock.lock`, `lockout_state` — lock-mode single-instance lock + auth-cooloff counter (**lock mode only**, i.e. Linux)
 
 **Fresh Linux box** (full lock + dashboard):
 
 1. `git clone` the repo (or copy the source)
-2. `make deb && sudo apt install ./dist/pong_0.4.3_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
+2. `make deb && sudo apt install ./dist/pong_0.4.4_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
 3. Bind `pong` to a keyboard shortcut in your DE's settings (use the full path `/usr/bin/pong` for the .deb install, `~/.local/bin/pong` for the source install)
 4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours

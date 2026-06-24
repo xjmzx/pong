@@ -160,6 +160,33 @@ def _user_config_dir():
 _USER_CONFIG_DIR = _user_config_dir()
 
 
+# Per-OS user *cache* dir for ephemeral runtime state (locks, theme-
+# alternation cache, lockout counter, crash log) — mirrors the config dir
+# but on each platform's native cache location so the mac/.dmg + win/.exe
+# bundles don't write a foreign ~/.cache tree. All entries live in a
+# `pong/` subdir (was flat ~/.cache/pong_* on Linux); upgrading Linux
+# users get a one-time reset of the lockout counter + theme cache, both of
+# which regenerate cheaply (the lockout is anti-spam, not auth).
+#   Linux:   $XDG_CACHE_HOME/pong  or  ~/.cache/pong
+#   macOS:   ~/Library/Caches/pong
+#   Windows: %LOCALAPPDATA%\pong  (machine-local data, NOT roamable
+#            %APPDATA%; falls back to ~/.cache/pong if unset)
+def _user_cache_dir():
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Caches/pong")
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return os.path.join(local, "pong")
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return os.path.join(xdg, "pong")
+    return os.path.expanduser("~/.cache/pong")
+
+
+_USER_CACHE_DIR = _user_cache_dir()
+
+
 # Dual-theme palette — channel triples mirrored verbatim from
 # ~/code_gh/xjmzx/ndisc.smpl/src/index.css :root (fizx) and .theme-upleb.
 # Pong alternates between the two on each launch; override via
@@ -176,7 +203,7 @@ THEMES = {
               "auburn": (178,  96,  58), "ok":     ( 74, 222, 128),
               "alert":  (248, 113, 113)},
 }
-THEME_CACHE  = os.path.expanduser("~/.cache/pong_lock_theme")
+THEME_CACHE  = os.path.join(_USER_CACHE_DIR, "theme")
 THEME_CONFIG = os.path.join(_USER_CONFIG_DIR, "theme.json")
 P = {}  # populated by main() via build_palette(_resolve_theme())
 # Up to three cities tracked in the left-column weather tile (clock view).
@@ -261,10 +288,10 @@ PADDLE_GAP = 20                 # clear gap between paddle face and tile edge
 # mirror this via LOGICAL_W - PADDLE_CLEAR.)
 PADDLE_CLEAR = PADDLE_MARGIN + PADDLE_W + PADDLE_GAP
 
-STATE_FILE = os.path.expanduser("~/.cache/pong_lock_state")
-LOCK_FILE = os.path.expanduser("~/.cache/pong_lock.lock")
-DASH_LOCK_FILE = os.path.expanduser("~/.cache/pong_dash.lock")
-CRASH_LOG = os.path.expanduser("~/.cache/pong/crash.log")
+STATE_FILE = os.path.join(_USER_CACHE_DIR, "lockout_state")
+LOCK_FILE = os.path.join(_USER_CACHE_DIR, "lock.lock")
+DASH_LOCK_FILE = os.path.join(_USER_CACHE_DIR, "dash.lock")
+CRASH_LOG = os.path.join(_USER_CACHE_DIR, "crash.log")
 
 # Dashboard-mode window defaults.
 DASH_WIN_W, DASH_WIN_H = 1280, 720

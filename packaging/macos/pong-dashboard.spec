@@ -15,7 +15,7 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag; default for
 # local builds.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.3")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.4")
 
 datas, binaries, hiddenimports = [], [], []
 # certifi: bundle a CA trust store so HTTPS (weather + calendar ICS) works
