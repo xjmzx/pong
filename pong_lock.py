@@ -1744,8 +1744,36 @@ def main():
         # slightly larger than the visible circle (see event handler).
         if dashboard_mode:
             btn_color = P["ACCENT"] if view_mode == "clock" else P["MAUVE"]
-            pygame.draw.circle(surf, btn_color,
-                               (view_btn_cx, view_btn_cy), view_btn_r)
+            cx, cy = view_btn_cx, view_btn_cy
+            if view_mode == "clock":
+                # Dashboard icon: 2×2 grid of small filled rounded
+                # squares — reads as "tiled layout / dashboard". Drawn
+                # in ACCENT to echo the focal clock tone.
+                cell = 9
+                # 2-pixel gap centred on (cx, cy) — top-left starts at
+                # -(cell+1), top-right at +1, same for y.
+                for x in (cx - cell - 1, cx + 1):
+                    for y in (cy - cell - 1, cy + 1):
+                        pygame.draw.rect(
+                            surf, btn_color, (x, y, cell, cell),
+                            border_radius=2)
+            else:
+                # Calendar icon: rounded body + header divider + two
+                # binder pegs above. Drawn in MAUVE to echo the
+                # calendar-day group-wash tone.
+                body = pygame.Rect(cx - 11, cy - 7, 22, 20)
+                pygame.draw.rect(
+                    surf, btn_color, body, width=2, border_radius=3)
+                pygame.draw.line(
+                    surf, btn_color,
+                    (body.left + 2, body.top + 7),
+                    (body.right - 2, body.top + 7), 2)
+                pygame.draw.rect(
+                    surf, btn_color,
+                    (cx - 7, body.top - 4, 3, 5))
+                pygame.draw.rect(
+                    surf, btn_color,
+                    (cx + 4, body.top - 4, 3, 5))
 
         surf.blit(paddle_surf,
                   (PADDLE_MARGIN, int(pl - PADDLE_H / 2)))
