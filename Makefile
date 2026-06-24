@@ -8,7 +8,7 @@ PREFIX = $(HOME)/.local
 # Debian packaging — `make deb` stages the install tree under build/
 # and emits dist/pong_$(VERSION)_all.deb. Override MAINTAINER if you
 # fork.
-VERSION = 0.4.4
+VERSION = 0.4.5
 MAINTAINER = xjmzx <jabbanawanga@gmail.com>
 PKG_NAME = pong_$(VERSION)_all
 PKG_DIR = build/$(PKG_NAME)
