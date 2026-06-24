@@ -611,8 +611,11 @@ def _fetch_weather_once():
                 _weather["text"] = primary_temp
                 _weather["sun"] = (sunrise[:5], sunset[:5])
                 _weather["moon"] = moon
-    except (urllib.error.URLError, TimeoutError, OSError):
-        pass
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # Log the primary-city failure (network / SSL) so a silently dead
+        # weather readout is diagnosable; per-city failures below stay quiet.
+        _log_lifecycle("weather/fetch-fail",
+                       f"loc={WEATHER_LOCATION!r} err={type(e).__name__}: {e}")
     # All tracked cities: temperature only, for the left-column tile. The
     # primary's temp is reused from the full fetch above to save a request;
     # a city that fails this cycle keeps its previous temp.
@@ -836,8 +839,12 @@ def _fetch_calendars_once():
                             next_event = {"start": start_dt,
                                           "summary": summary,
                                           "location": location}
-            except Exception:
-                pass  # per-calendar failure; still surface the colour+name
+            except Exception as e:
+                # Per-calendar failure (network / SSL / parse): still
+                # surface the colour+name, but log a one-liner so the
+                # cause is diagnosable instead of vanishing silently.
+                _log_lifecycle("calendar/fetch-fail",
+                               f"name={name!r} err={type(e).__name__}: {e}")
         results.append({"name": name, "color": color, "next": next_event})
     # Order each day's events: all-day context first (OFF days, holidays
     # — "this day is X"), then timed events chronologically. Sorted once

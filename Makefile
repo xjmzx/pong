@@ -8,7 +8,7 @@ PREFIX = $(HOME)/.local
 # Debian packaging — `make deb` stages the install tree under build/
 # and emits dist/pong_$(VERSION)_all.deb. Override MAINTAINER if you
 # fork.
-VERSION = 0.4.0
+VERSION = 0.4.1
 MAINTAINER = xjmzx <jabbanawanga@gmail.com>
 PKG_NAME = pong_$(VERSION)_all
 PKG_DIR = build/$(PKG_NAME)
@@ -91,7 +91,7 @@ clean-deb:
 mac-venv:
 	python3 -m venv $(MAC_VENV)
 	$(MAC_VENV)/bin/pip install --quiet --upgrade pip
-	$(MAC_VENV)/bin/pip install --quiet pygame icalendar recurring-ical-events pyinstaller
+	$(MAC_VENV)/bin/pip install --quiet pygame icalendar recurring-ical-events certifi pyinstaller
 	@echo "venv ready: $(MAC_VENV)"
 
 mac-icon: $(MAC_ICON)

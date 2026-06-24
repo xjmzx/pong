@@ -16,7 +16,7 @@ Build the package once, then `apt install` it like any other system package:
 
 ```
 make deb
-sudo apt install ./dist/pong_0.4.0_all.deb
+sudo apt install ./dist/pong_0.4.1_all.deb
 ```
 
 The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
@@ -76,7 +76,7 @@ The bundle is **ad-hoc signed, not notarized.** Running it locally is fine, but 
 The same dashboard runs on Windows. From source: `pip install pygame icalendar recurring-ical-events` then `python pong_lock.py --dashboard`. To build a single-file **Pong Dashboard.exe** (windowed, self-contained), on a Windows machine with PyInstaller:
 
 ```
-pip install pygame icalendar recurring-ical-events pyinstaller
+pip install pygame icalendar recurring-ical-events certifi pyinstaller
 pyinstaller --noconfirm packaging\windows\pong-dashboard-win.spec
 ```
 
@@ -87,7 +87,7 @@ The spec lives in [`packaging/windows/`](packaging/windows/) and shares the `--d
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the release assets (macOS Apple-Silicon `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed. Intel Macs aren't built in CI (macos-13 runners are scarce/deprecated) — build locally with `make dmg` or run from source.
 
 ```
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.4.1 && git push origin v0.4.1
 ```
 
 The tag drives the version baked into the artifact filenames and the macOS bundle's `Info.plist`. Run the workflow manually (Actions → *Release dashboard apps* → *Run workflow*) to dry-run the builds without cutting a release.
@@ -230,7 +230,7 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/` (which holds `calendars.json` and `theme.json`). To set up on a fresh Linux box:
 
 1. `git clone` the repo (or copy the source)
-2. `make deb && sudo apt install ./dist/pong_0.4.0_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
+2. `make deb && sudo apt install ./dist/pong_0.4.1_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
 3. Bind `pong` to a keyboard shortcut in your DE's settings (use the full path `/usr/bin/pong` for the .deb install, `~/.local/bin/pong` for the source install)
 4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours

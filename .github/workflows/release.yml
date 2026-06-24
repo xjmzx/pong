@@ -80,7 +80,7 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - name: Install deps
-        run: pip install pygame icalendar recurring-ical-events pyinstaller
+        run: pip install pygame icalendar recurring-ical-events certifi pyinstaller
 
       - name: Build .exe
         env:

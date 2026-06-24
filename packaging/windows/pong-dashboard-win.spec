@@ -14,10 +14,12 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.0")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.1")
 
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("icalendar", "recurring_ical_events", "pygame"):
+# certifi: bundle a CA trust store so HTTPS (weather + calendar ICS) works
+# on machines without the bundled OpenSSL's baked-in cert path.
+for pkg in ("icalendar", "recurring_ical_events", "pygame", "certifi"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
