@@ -16,7 +16,7 @@ Build the package once, then `apt install` it like any other system package:
 
 ```
 make deb
-sudo apt install ./dist/pong_0.3.0_all.deb
+sudo apt install ./dist/pong_0.4.0_all.deb
 ```
 
 The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
@@ -229,7 +229,7 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/` (which holds `calendars.json` and `theme.json`). To set up on a fresh Linux box:
 
 1. `git clone` the repo (or copy the source)
-2. `make deb && sudo apt install ./dist/pong_0.2.0_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
+2. `make deb && sudo apt install ./dist/pong_0.4.0_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
 3. Bind `pong` to a keyboard shortcut in your DE's settings (use the full path `/usr/bin/pong` for the .deb install, `~/.local/bin/pong` for the source install)
 4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours

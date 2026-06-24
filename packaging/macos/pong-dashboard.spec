@@ -15,7 +15,7 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag; default for
 # local builds.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.3.0")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.0")
 
 datas, binaries, hiddenimports = [], [], []
 for pkg in ("icalendar", "recurring_ical_events", "pygame"):
