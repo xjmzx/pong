@@ -1,0 +1,96 @@
+name: Release dashboard apps
+
+# Tag-driven releases. Push a tag like `v0.4.0` and this builds the macOS
+# dashboard .dmg for both architectures and attaches them to the GitHub
+# Release for that tag. Also runnable manually (workflow_dispatch) to dry-
+# run a build without cutting a release.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v, e.g. 0.4.0"
+        required: true
+
+permissions:
+  contents: write   # create the Release + upload assets
+
+jobs:
+  build-macos:
+    name: Build macOS .dmg (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon
+            arch: arm64
+          - runner: macos-13   # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools (librsvg for the icon, create-dmg for layout)
+        run: brew install librsvg create-dmg
+
+      - name: Set up venv
+        run: make mac-venv
+
+      - name: Build .dmg
+        env:
+          PONG_VERSION: ${{ steps.ver.outputs.version }}
+        run: make dmg VERSION="${{ steps.ver.outputs.version }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Attach DMGs to the Release
+    needs: build-macos
+    if: github.event_name == 'push'   # only on a real tag, not manual dry-runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            macOS dashboard app (unsigned, ad-hoc signed).
+
+            **Install:** open the `.dmg`, drag **Pong Dashboard** to Applications.
+            On first launch macOS will block it (unsigned) — right-click the app
+            and choose **Open**, or run:
+
+            ```
+            xattr -dr com.apple.quarantine "/Applications/Pong Dashboard.app"
+            ```
+
+            Pick the `arm64` build for Apple Silicon, `x86_64` for Intel Macs.

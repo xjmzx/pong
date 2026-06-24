@@ -13,6 +13,10 @@ from PyInstaller.utils.hooks import collect_all
 # SPECPATH is injected by PyInstaller = directory holding this spec file.
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
+# Bundle version: CI sets PONG_VERSION from the release tag; default for
+# local builds.
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.3.0")
+
 datas, binaries, hiddenimports = [], [], []
 for pkg in ("icalendar", "recurring_ical_events", "pygame"):
     d, b, h = collect_all(pkg)
@@ -60,8 +64,8 @@ app = BUNDLE(
     icon=os.path.join(SPECPATH, "pong.icns"),
     bundle_identifier="uk.upleb.pong.dashboard",
     info_plist={
-        "CFBundleShortVersionString": "0.3.0",
-        "CFBundleVersion": "0.3.0",
+        "CFBundleShortVersionString": PONG_VERSION,
+        "CFBundleVersion": PONG_VERSION,
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.utilities",
         "LSMinimumSystemVersion": "11.0",
