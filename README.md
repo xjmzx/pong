@@ -150,7 +150,7 @@ The screen is divided into a 4×4 grid with the clock in the centre 2×2 and the
 **Left column (top → bottom):**
 - (0,0) Jog (cal[0]) — calendar name + NEXT event, pistachio tint backdrop
 - (0,1) TT (cal[1]) — calendar name + NEXT event, mango tint backdrop
-- (0,2) Weather composite — temp, city, sunrise, sunset, source (wttr.in)
+- (0,2) Weather tile — up to three cities (`WEATHER_LOCATIONS`) stacked, each with its current temperature (label left, temp right), in dashboard clock view. The primary city's temp also shows in the header strip; sunrise/sunset/moon come from the same primary fetch (wttr.in)
 - (0,3) Identity — `user@host` plus a design profile line (`FIZX · #ACCENT · #MAUVE · #AUBURN`)
 
 **Centre column:**
@@ -187,10 +187,11 @@ Up to two calendars are surfaced — first entry → cell (0,0), second → cell
 
 ### Weather (top of `pong_lock.py`)
 
-- `WEATHER_LOCATION` — wttr.in location string (city name, airport code, or `~Lat,Lon`); empty string uses IP geolocation
+- `WEATHER_LOCATIONS` — list of up to three wttr.in locations (city name, airport code, or `~Lat,Lon`) shown stacked in the left-column weather tile (dashboard clock view), each with its current temperature. The **first** entry is the primary: it also drives the header-strip temp and the sunrise/sunset/moon readout. Default `["Hanoi", "Edinburgh", "Beijing"]`.
+- `WEATHER_LOCATION` — the primary location, derived from `WEATHER_LOCATIONS[0]`; empty string uses IP geolocation.
 - `WEATHER_REFRESH_SEC` — fetch cadence (default 30 min)
 
-No API key needed. Powered by [wttr.in](https://wttr.in).
+The primary city is fetched once per cycle for its full readout (temp + sun/moon); the other cities are temp-only, and a city that fails a cycle keeps its last reading. No API key needed. Powered by [wttr.in](https://wttr.in).
 
 ## Tunables (top of `pong_lock.py`)
 

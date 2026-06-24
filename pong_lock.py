@@ -155,7 +155,11 @@ THEMES = {
 THEME_CACHE  = os.path.expanduser("~/.cache/pong_lock_theme")
 THEME_CONFIG = os.path.expanduser("~/.config/pong/theme.json")
 P = {}  # populated by main() via build_palette(_resolve_theme())
-WEATHER_LOCATION = "Hanoi"      # wttr.in location string; "" for IP-based
+# Up to three cities tracked in the left-column weather tile (clock view).
+# The first entry is the "primary" — it also feeds the header-strip temp
+# and the sunrise/sunset/moon readout. The rest are temperature-only.
+WEATHER_LOCATIONS = ["Hanoi", "Edinburgh", "Beijing"]  # wttr.in location strings
+WEATHER_LOCATION = WEATHER_LOCATIONS[0]   # primary; "" for IP-based geolocation
 WEATHER_REFRESH_SEC = 1800      # 30 min between fetches
 WEATHER_TIMEOUT_SEC = 6         # fetch timeout
 EVENT_LABEL_MAX = 14            # truncate event labels to this many chars
@@ -572,26 +576,62 @@ def draw_grid(surf):
                          (LOGICAL_W, dash_top + r * CELL_H), 1)
 
 
-_weather = {"text": "", "sun": (), "moon": ""}
+# "cities" is a list of (LABEL, temp) for every WEATHER_LOCATIONS entry,
+# rendered as the stacked left-column weather tile. Seed it with the
+# configured labels so the tile shows the city names before the first
+# fetch lands.
+_weather = {"text": "", "sun": (), "moon": "",
+            "cities": [(c.upper(), "") for c in WEATHER_LOCATIONS]}
+
+
+def _fetch_wttr(location, fmt_fields):
+    """One wttr.in request. Returns the stripped body, or None on a
+    transient failure / 'unknown location' response."""
+    fmt = urllib.parse.quote(fmt_fields, safe="")
+    url = f"https://wttr.in/{urllib.parse.quote(location)}?format={fmt}"
+    req = urllib.request.Request(url, headers={"User-Agent": "pong-lock"})
+    with urllib.request.urlopen(req, timeout=WEATHER_TIMEOUT_SEC) as resp:
+        body = resp.read().decode("utf-8", "replace").strip()
+    if not body or body.lower().startswith("unknown"):
+        return None
+    return body
 
 
 def _fetch_weather_once():
-    fmt = urllib.parse.quote("%t|%S|%s|%m", safe="")
-    url = f"https://wttr.in/{WEATHER_LOCATION}?format={fmt}"
+    # Primary city: full readout (temp + sunrise/sunset/moon) for the
+    # header strip. Keep the primary temp to reuse in the city list below.
+    primary_temp = ""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "pong-lock"})
-        with urllib.request.urlopen(req, timeout=WEATHER_TIMEOUT_SEC) as resp:
-            body = resp.read().decode("utf-8", "replace").strip()
-        if not body or body.lower().startswith("unknown"):
-            return
-        parts = body.split("|")
-        if len(parts) >= 4:
-            temp, sunrise, sunset, moon = parts[:4]
-            _weather["text"] = temp.replace("+", "")
-            _weather["sun"] = (sunrise[:5], sunset[:5])
-            _weather["moon"] = moon
+        body = _fetch_wttr(WEATHER_LOCATION, "%t|%S|%s|%m")
+        if body:
+            parts = body.split("|")
+            if len(parts) >= 4:
+                temp, sunrise, sunset, moon = parts[:4]
+                primary_temp = temp.replace("+", "")
+                _weather["text"] = primary_temp
+                _weather["sun"] = (sunrise[:5], sunset[:5])
+                _weather["moon"] = moon
     except (urllib.error.URLError, TimeoutError, OSError):
         pass
+    # All tracked cities: temperature only, for the left-column tile. The
+    # primary's temp is reused from the full fetch above to save a request;
+    # a city that fails this cycle keeps its previous temp.
+    prev = dict(_weather["cities"])
+    cities = []
+    for loc in WEATHER_LOCATIONS:
+        label = loc.upper()
+        if loc == WEATHER_LOCATION and primary_temp:
+            cities.append((label, primary_temp))
+            continue
+        temp = prev.get(label, "")
+        try:
+            body = _fetch_wttr(loc, "%t")
+            if body:
+                temp = body.replace("+", "")
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        cities.append((label, temp))
+    _weather["cities"] = cities
 
 
 def start_weather_thread():
@@ -1163,6 +1203,10 @@ def main():
     city_surf = (city_font.render(WEATHER_LOCATION.upper(), True,
                                   WHITE_TEXT)
                  if WEATHER_LOCATION else None)
+    # Left-column weather tile (clock view): 3 cities + temps stacked.
+    # City label in Ubuntu white, temp in the clock face / auburn.
+    weather_city_font = pygame.font.SysFont(UBUNTU_STACK, 28)
+    weather_temp_font = _make_dash_clock_font(40)
     event_header_surf = ui_font.render(" / NEXT", True, WHITE_TEXT)
     # Design profile readout — two side-by-side palette columns
     # (fizx | upleb) so the chip shows both theme identities at once.
@@ -1278,6 +1322,8 @@ def main():
     dayline_surf = None
     weather_key = ("", ())
     weather_surf = None
+    weather_cities_key = None
+    weather_cities_surf = None
     # Header-strip versions of dayline + temp, rendered at ui_font size
     # rather than the focal 40/56 tiers — they live in the slim header
     # row above the lattice and need to stay compact.
@@ -1578,6 +1624,32 @@ def main():
             surf.blit(clock_surf,
                       (center_x - clock_colon_offset,
                        cy + (ch - clock_surf.get_height()) // 2))
+
+        # Left-column weather tile: the 3 tracked cities + temps, stacked
+        # (label left, temp right). Dashboard clock view only — calendar
+        # view uses this region for the week-3 date row. The surface is
+        # rebuilt only when a temperature changes.
+        if dashboard_mode and view_mode == "clock":
+            cur_cities = tuple(_weather["cities"])
+            if cur_cities != weather_cities_key:
+                weather_cities_key = cur_cities
+                _, _, ww, wh = dash_content_rects["weather"]
+                weather_cities_surf = pygame.Surface(
+                    (ww, wh), pygame.SRCALPHA)
+                row_h = wh / (len(cur_cities) or 1)
+                for i, (label, temp) in enumerate(cur_cities):
+                    row_cy = int(row_h * i + row_h / 2)
+                    lab = weather_city_font.render(label, True, WHITE_TEXT)
+                    weather_cities_surf.blit(
+                        lab, (TILE_INSET, row_cy - lab.get_height() // 2))
+                    tmp = weather_temp_font.render(
+                        temp or "--", True, P["AUBURN"])
+                    weather_cities_surf.blit(
+                        tmp, (ww - TILE_INSET - tmp.get_width(),
+                              row_cy - tmp.get_height() // 2))
+            if weather_cities_surf is not None:
+                wx, wy = dash_content_rects["weather"][:2]
+                surf.blit(weather_cities_surf, (wx, wy))
 
         col0_text_x = dash_content_rects["cal0"][0] + TILE_INSET
         _cy = lambda k: (dash_content_rects[k][1]
