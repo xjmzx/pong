@@ -187,6 +187,13 @@ def _user_cache_dir():
 _USER_CACHE_DIR = _user_cache_dir()
 
 
+def _app_icon_path():
+    """Window/app icon PNG — bundled next to the frozen executable
+    (`sys._MEIPASS`) in the .app/.exe, else alongside this source file."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "icon-dash.png")
+
+
 # Dual-theme palette — channel triples mirrored verbatim from
 # ~/code_gh/xjmzx/ndisc.smpl/src/index.css :root (fizx) and .theme-upleb.
 # Pong alternates between the two on each launch; override via
@@ -1107,6 +1114,14 @@ def main():
             pass
     pygame.init()
     pygame.font.init()
+    # Set our icon BEFORE the first set_mode(): pygame otherwise applies
+    # its own default mascot icon to the running app, which on macOS owns
+    # the Dock / Cmd-Tab slot and shadows the bundle's pong.icns. Match the
+    # bundle icon so the running app reads as pong on every platform.
+    try:
+        pygame.display.set_icon(pygame.image.load(_app_icon_path()))
+    except Exception:
+        pass
     _log_lifecycle("init", "stage=pygame_ready")
     start_weather_thread()
     _ensure_calendar_config()

@@ -15,7 +15,7 @@ ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag; default for
 # local builds.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.5")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.6")
 
 datas, binaries, hiddenimports = [], [], []
 # certifi: bundle a CA trust store so HTTPS (weather + calendar ICS) works
@@ -27,6 +27,9 @@ for pkg in ("icalendar", "recurring_ical_events", "pygame", "certifi"):
     hiddenimports += h
 # pong_lock.py imports the SDL2 video bindings at module top level.
 hiddenimports += ["pygame._sdl2", "pygame._sdl2.video"]
+# Window/app icon PNG, loaded via pygame.display.set_icon() so the running
+# app shows pong (not the default pygame mascot) in the Dock / Cmd-Tab.
+datas += [(os.path.join(ROOT, "icon-dash.png"), ".")]
 
 a = Analysis(
     [os.path.join(SPECPATH, "..", "pong_dash_entry.py")],

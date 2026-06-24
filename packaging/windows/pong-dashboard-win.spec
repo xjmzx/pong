@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.5")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.6")
 
 datas, binaries, hiddenimports = [], [], []
 # certifi: bundle a CA trust store so HTTPS (weather + calendar ICS) works
@@ -25,6 +25,9 @@ for pkg in ("icalendar", "recurring_ical_events", "pygame", "certifi"):
     binaries += b
     hiddenimports += h
 hiddenimports += ["pygame._sdl2", "pygame._sdl2.video"]
+# Window/app icon PNG, loaded via pygame.display.set_icon() so the running
+# app shows pong (not the default pygame mascot) in the taskbar.
+datas += [(os.path.join(ROOT, "icon-dash.png"), ".")]
 
 a = Analysis(
     [os.path.join(SPECPATH, "..", "pong_dash_entry.py")],
