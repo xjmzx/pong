@@ -14,7 +14,7 @@ PKG_NAME = pong_$(VERSION)_all
 PKG_DIR = build/$(PKG_NAME)
 DIST_DIR = dist
 
-.PHONY: all install uninstall deps deb clean-deb help mac-venv mac-icon app clean-app
+.PHONY: all install uninstall deps deb clean-deb help mac-venv mac-icon app dmg clean-app
 
 # macOS dashboard .app build (PyInstaller). Dashboard mode only — lock
 # mode is Linux/PAM-only and is never bundled.
@@ -113,8 +113,13 @@ app: $(MAC_ICON)
 	@echo "Built: dist/Pong Dashboard.app"
 	@echo "Run:   open 'dist/Pong Dashboard.app'   (or drag it into /Applications)"
 
+# Drag-to-Applications .dmg for a release. Builds the .app first.
+# Prefers create-dmg (laid-out window); falls back to hdiutil.
+dmg: app
+	packaging/macos/make-dmg.sh "dist/Pong Dashboard.app" "$(VERSION)" dist
+
 clean-app:
-	rm -rf build/pyi dist/"Pong Dashboard.app" $(MAC_ICONSET)
+	rm -rf build/pyi dist/"Pong Dashboard.app" dist/PongDashboard-*.dmg $(MAC_ICONSET)
 
 help:
 	@echo "Available make targets:"
@@ -125,7 +130,8 @@ help:
 	@echo "  clean-deb  - Remove build/ and dist/ artifacts"
 	@echo "  mac-venv   - (macOS) Create .venv with pygame + pyinstaller"
 	@echo "  app        - (macOS) Build dist/Pong Dashboard.app (run mac-venv first)"
-	@echo "  clean-app  - (macOS) Remove the built .app + PyInstaller workdir"
+	@echo "  dmg        - (macOS) Build a drag-to-Applications .dmg from the .app"
+	@echo "  clean-app  - (macOS) Remove the built .app + .dmg + PyInstaller workdir"
 	@echo "  help       - Print this help"
 	@echo ""
 	@echo "Variables:"
