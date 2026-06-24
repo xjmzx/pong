@@ -14,7 +14,14 @@ PKG_NAME = pong_$(VERSION)_all
 PKG_DIR = build/$(PKG_NAME)
 DIST_DIR = dist
 
-.PHONY: all install uninstall deps deb clean-deb help
+.PHONY: all install uninstall deps deb clean-deb help mac-venv mac-icon app clean-app
+
+# macOS dashboard .app build (PyInstaller). Dashboard mode only — lock
+# mode is Linux/PAM-only and is never bundled.
+MAC_VENV = .venv
+MAC_SPEC = packaging/macos/pong-dashboard.spec
+MAC_ICON = packaging/macos/pong.icns
+MAC_ICONSET = packaging/macos/pong.iconset
 
 all: help
 
@@ -76,6 +83,39 @@ deb:
 clean-deb:
 	rm -rf build $(DIST_DIR)
 
+# --- macOS dashboard .app -------------------------------------------------
+# Build flow:  make mac-venv   (once: venv + pygame/icalendar/pyinstaller)
+#              make app        (icon + PyInstaller bundle -> dist/)
+# Requires macOS with python3 and librsvg (`brew install librsvg`).
+
+mac-venv:
+	python3 -m venv $(MAC_VENV)
+	$(MAC_VENV)/bin/pip install --quiet --upgrade pip
+	$(MAC_VENV)/bin/pip install --quiet pygame icalendar recurring-ical-events pyinstaller
+	@echo "venv ready: $(MAC_VENV)"
+
+mac-icon: $(MAC_ICON)
+
+$(MAC_ICON): icon-dash.svg
+	rm -rf $(MAC_ICONSET)
+	mkdir -p $(MAC_ICONSET)
+	for sz in 16 32 128 256 512; do \
+	  rsvg-convert -w $$sz -h $$sz icon-dash.svg -o $(MAC_ICONSET)/icon_$${sz}x$${sz}.png; \
+	  d=$$((sz*2)); \
+	  rsvg-convert -w $$d -h $$d icon-dash.svg -o $(MAC_ICONSET)/icon_$${sz}x$${sz}@2x.png; \
+	done
+	iconutil -c icns $(MAC_ICONSET) -o $(MAC_ICON)
+	rm -rf $(MAC_ICONSET)
+
+app: $(MAC_ICON)
+	$(MAC_VENV)/bin/pyinstaller --noconfirm --distpath dist --workpath build/pyi $(MAC_SPEC)
+	@echo ""
+	@echo "Built: dist/Pong Dashboard.app"
+	@echo "Run:   open 'dist/Pong Dashboard.app'   (or drag it into /Applications)"
+
+clean-app:
+	rm -rf build/pyi dist/"Pong Dashboard.app" $(MAC_ICONSET)
+
 help:
 	@echo "Available make targets:"
 	@echo "  deps       - Install runtime dependencies (apt + pip)"
@@ -83,6 +123,9 @@ help:
 	@echo "  uninstall  - Remove installed files"
 	@echo "  deb        - Build a .deb package at dist/$(PKG_NAME).deb"
 	@echo "  clean-deb  - Remove build/ and dist/ artifacts"
+	@echo "  mac-venv   - (macOS) Create .venv with pygame + pyinstaller"
+	@echo "  app        - (macOS) Build dist/Pong Dashboard.app (run mac-venv first)"
+	@echo "  clean-app  - (macOS) Remove the built .app + PyInstaller workdir"
 	@echo "  help       - Print this help"
 	@echo ""
 	@echo "Variables:"
