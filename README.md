@@ -16,7 +16,7 @@ Build the package once, then `apt install` it like any other system package:
 
 ```
 make deb
-sudo apt install ./dist/pong_0.4.2_all.deb
+sudo apt install ./dist/pong_0.4.3_all.deb
 ```
 
 The `.deb` lands files at standard system paths (`/usr/bin/pong`, `/usr/share/applications/pong.desktop`, `/usr/share/icons/...`) and declares its runtime dependencies, so apt pulls in `python3-pam`, `python3-pygame`, and `python3-icalendar` automatically. `python3-recurring-ical-events` is a `Recommends` — the lock degrades gracefully without it (no calendar chips, everything else still works).
@@ -87,7 +87,7 @@ The spec lives in [`packaging/windows/`](packaging/windows/) and shares the `--d
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds the release assets (macOS Apple-Silicon `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed. Intel Macs aren't built in CI (macos-13 runners are scarce/deprecated) — build locally with `make dmg` or run from source.
 
 ```
-git tag v0.4.2 && git push origin v0.4.2
+git tag v0.4.3 && git push origin v0.4.3
 ```
 
 The tag drives the version baked into the artifact filenames and the macOS bundle's `Info.plist`. Run the workflow manually (Actions → *Release dashboard apps* → *Run workflow*) to dry-run the builds without cutting a release.
@@ -244,7 +244,7 @@ Per-user config (`calendars.json`, `theme.json`) lives in the per-OS user config
 **Fresh Linux box** (full lock + dashboard):
 
 1. `git clone` the repo (or copy the source)
-2. `make deb && sudo apt install ./dist/pong_0.4.2_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
+2. `make deb && sudo apt install ./dist/pong_0.4.3_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
 3. Bind `pong` to a keyboard shortcut in your DE's settings (use the full path `/usr/bin/pong` for the .deb install, `~/.local/bin/pong` for the source install)
 4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours
