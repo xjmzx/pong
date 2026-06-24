@@ -11,10 +11,14 @@ Two modes share one binary:
 
 import atexit
 import datetime as _dt
-import fcntl
+try:
+    import fcntl  # Unix-only; absent on Windows
+except ImportError:
+    fcntl = None
 import getpass
 import json
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -237,6 +241,14 @@ CRASH_LOG = os.path.expanduser("~/.cache/pong/crash.log")
 # Dashboard-mode window defaults.
 DASH_WIN_W, DASH_WIN_H = 1280, 720
 DASH_WIN_MIN = (640, 360)
+# Optional initial window-size override, e.g. PONG_DASH_SIZE=960x540
+_dash_size = os.environ.get("PONG_DASH_SIZE", "")
+if "x" in _dash_size.lower():
+    try:
+        _w, _h = _dash_size.lower().split("x", 1)
+        DASH_WIN_W, DASH_WIN_H = int(_w), int(_h)
+    except ValueError:
+        pass
 
 
 def _fade(rgb, f):
@@ -386,8 +398,12 @@ def acquire_single_instance(lock_path=LOCK_FILE):
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     fp = open(lock_path, "w")
     try:
-        fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        if fcntl is not None:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:  # Windows: no fcntl — use an msvcrt byte-range lock instead
+            import msvcrt
+            msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
         sys.exit(0)
     return fp  # kept alive so the lock survives for this process's lifetime
 
@@ -929,13 +945,23 @@ def main():
     theme_name = _resolve_theme()
     P.update(build_palette(theme_name))
 
+    if sys.platform == "win32":
+        # Per-monitor DPI awareness so the window uses real pixels rather
+        # than being stretched by Windows display scaling (a 1280x720
+        # window on a 150%-scaled 1080p panel would otherwise fill the
+        # whole screen).
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
     pygame.init()
     pygame.font.init()
     _log_lifecycle("init", "stage=pygame_ready")
     start_weather_thread()
     _ensure_calendar_config()
     start_calendar_thread()
-    user_host = f"{getpass.getuser()}@{os.uname().nodename}"
+    user_host = f"{getpass.getuser()}@{platform.node()}"
 
     win = ren = tex = None
     dst_rects = None
@@ -1041,7 +1067,11 @@ def main():
     # treatment.
     DASH_CLOCK_FILE = os.path.expanduser(
         "~/.local/share/fonts/GoogleSansFlex-Bold-Static.ttf")
-    DASH_CLOCK_STACK = ("google sans flex,roboto,inter,ibm plex sans,"
+    # "google sans flex regular" is how pygame indexes the variable-font
+    # instance when it's installed as a system font (e.g. on Windows),
+    # since match_font can't resolve the bare "google sans flex" family.
+    DASH_CLOCK_STACK = ("google sans flex,google sans flex regular,"
+                        "roboto,inter,ibm plex sans,"
                         "ubuntu,helvetica,arial,nimbus sans,liberation sans")
 
     def _make_dash_clock_font(size):
