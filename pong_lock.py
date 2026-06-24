@@ -1029,12 +1029,21 @@ def main():
         pygame.event.set_grab(True)
     _log_lifecycle("init", "stage=window_ready")
 
-    surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
+    # Explicit 32-bit, NO per-pixel alpha (depth=32, flags=0 -> alpha
+    # mask 0). The logical frame + static layer are opaque canvases: a
+    # RESIZABLE window on macOS hands back a display format WITH an alpha
+    # channel, so a bare pygame.Surface((W,H)) inherits it and the faint
+    # alpha-blended tile washes composite down to alpha 0 (transparent) —
+    # tiles + day washes vanish and past-day shading reads wrong. Forcing
+    # an opaque 32-bit format fixes it cross-platform and stays texture-
+    # compatible for the lock-mode SDL2 renderer path. (32-bit, not 24,
+    # so tex.update(surf) keeps a matching pitch.)
+    surf = pygame.Surface((LOGICAL_W, LOGICAL_H), 0, 32)
     # Pre-render the static visual layer once: bg + 120 mini-tile
     # bgs + outlines + 4 content tile outlines + weather/identity
     # wash. Per-frame work drops to ~one full-window blit plus
     # dynamic overlays (cal tints, flashes, clock, text, paddles).
-    dash_static_surf = pygame.Surface((LOGICAL_W, LOGICAL_H))
+    dash_static_surf = pygame.Surface((LOGICAL_W, LOGICAL_H), 0, 32)
     dash_static_surf.fill(P["BG"])
     _faint_static = P["MAUVE"]
     # Mini-tile fills first, then any mode-specific washes, then the

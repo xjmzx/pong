@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 
 # Bundle version: CI sets PONG_VERSION from the release tag.
-PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.1")
+PONG_VERSION = os.environ.get("PONG_VERSION", "0.4.2")
 
 datas, binaries, hiddenimports = [], [], []
 # certifi: bundle a CA trust store so HTTPS (weather + calendar ICS) works
