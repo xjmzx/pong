@@ -630,9 +630,12 @@ def draw_grid(surf):
 # "cities" is a list of (LABEL, temp) for every WEATHER_LOCATIONS entry,
 # rendered as the stacked left-column weather tile. Seed it with the
 # configured labels so the tile shows the city names before the first
-# fetch lands.
+# fetch lands. "forecast" is a list of (DAY_LABEL, "HI/LO") tuples for
+# the primary city's next 3 days, rendered in the right-flank lookahead
+# tile. Empty until the first j1 JSON fetch lands.
 _weather = {"text": "", "sun": (), "moon": "",
-            "cities": [(c.upper(), "") for c in WEATHER_LOCATIONS]}
+            "cities": [(c.upper(), "") for c in WEATHER_LOCATIONS],
+            "forecast": []}
 
 
 def _fetch_wttr(location, fmt_fields):
@@ -646,6 +649,37 @@ def _fetch_wttr(location, fmt_fields):
     if not body or body.lower().startswith("unknown"):
         return None
     return body
+
+
+def _fetch_wttr_forecast(location):
+    """Fetch the next-3-days forecast for `location` via wttr.in's `j1`
+    JSON endpoint. Returns a list of (DAY_LABEL, "HI/LO") tuples — today
+    + the next two days, hi/lo in Celsius (no unit, matching the slot's
+    compact format). DAY_LABEL is "TODAY" for index 0, then weekday
+    abbreviations (e.g. "WED"). Returns None on transient failure or an
+    unparseable response."""
+    url = f"https://wttr.in/{urllib.parse.quote(location)}?format=j1"
+    req = urllib.request.Request(url, headers={"User-Agent": "pong-lock"})
+    with urllib.request.urlopen(req, timeout=WEATHER_TIMEOUT_SEC) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+    days = data.get("weather", [])[:3]
+    out = []
+    for i, d in enumerate(days):
+        hi = str(d.get("maxtempC", "")).strip()
+        lo = str(d.get("mintempC", "")).strip()
+        if not (hi and lo):
+            continue
+        if i == 0:
+            label = "TODAY"
+        else:
+            try:
+                dt = _dt.datetime.strptime(
+                    d.get("date", ""), "%Y-%m-%d").date()
+                label = dt.strftime("%a").upper()
+            except (ValueError, TypeError):
+                label = f"+{i}"
+        out.append((label, f"{hi}/{lo}"))
+    return out or None
 
 
 def _fetch_weather_once():
@@ -686,6 +720,18 @@ def _fetch_weather_once():
             pass
         cities.append((label, temp))
     _weather["cities"] = cities
+    # Primary city: 3-day forecast (today + next two days) for the
+    # right-flank lookahead tile. Separate from the per-city %t fetches
+    # above (different endpoint: j1 JSON). A failure keeps the previous
+    # forecast — same "last reading sticks" rule as cities.
+    try:
+        fc = _fetch_wttr_forecast(WEATHER_LOCATION)
+        if fc:
+            _weather["forecast"] = fc
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        _log_lifecycle("weather/forecast-fail",
+                       f"loc={WEATHER_LOCATION!r} "
+                       f"err={type(e).__name__}: {e}")
 
 
 def start_weather_thread():
@@ -1397,6 +1443,8 @@ def main():
     weather_surf = None
     weather_cities_key = None
     weather_cities_surf = None
+    lookahead_key = None
+    lookahead_surf = None
     # Header-strip versions of dayline + temp, rendered at ui_font size
     # rather than the focal 40/56 tiers — they live in the slim header
     # row above the lattice and need to stay compact.
@@ -1723,6 +1771,35 @@ def main():
             if weather_cities_surf is not None:
                 wx, wy = dash_content_rects["weather"][:2]
                 surf.blit(weather_cities_surf, (wx, wy))
+
+        # Right-flank lookahead tile: primary-city 3-day forecast
+        # (TODAY/<day>/<day>, hi/lo right-aligned). Visual parallel to
+        # the left weather tile — same row pattern, same fonts, same
+        # insets, label-left/temp-right — just swapping the city axis
+        # for a time axis. Rebuilt only when the forecast tuple changes.
+        if dashboard_mode and view_mode == "clock":
+            cur_fc = tuple(_weather["forecast"])
+            if cur_fc != lookahead_key:
+                lookahead_key = cur_fc
+                _, _, lw, lh = dash_content_rects["lookahead"]
+                lookahead_surf = pygame.Surface((lw, lh), pygame.SRCALPHA)
+                if cur_fc:
+                    row_h = lh / len(cur_fc)
+                    for i, (label, hilo) in enumerate(cur_fc):
+                        row_cy = int(row_h * i + row_h / 2)
+                        lab = weather_city_font.render(
+                            label, True, WHITE_TEXT)
+                        lookahead_surf.blit(
+                            lab, (TILE_INSET,
+                                  row_cy - lab.get_height() // 2))
+                        val = weather_temp_font.render(
+                            hilo, True, P["AUBURN"])
+                        lookahead_surf.blit(
+                            val, (lw - TILE_INSET - val.get_width(),
+                                  row_cy - val.get_height() // 2))
+            if lookahead_surf is not None:
+                lx, ly = dash_content_rects["lookahead"][:2]
+                surf.blit(lookahead_surf, (lx, ly))
 
         col0_text_x = dash_content_rects["cal0"][0] + TILE_INSET
         _cy = lambda k: (dash_content_rects[k][1]
