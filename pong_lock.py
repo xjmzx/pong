@@ -192,6 +192,19 @@ TILE_BG_INPUT_ALPHA = 12        # ~5% of 255 — input strip, lighter still
 # the week fading too much.
 TILE_BG_TODAY_BOOST = 51        # +20% of 255 added to today's wash
 TILE_BG_TOMORROW_BOOST = 26     # +10% of 255 added to tomorrow's wash
+# Past-day fade: yesterday recedes a step, anything ≥2 days ago
+# recedes further. Same rule applies in both clock view (only the
+# current M-F strip is shown) and full calendar view.
+TILE_BG_PAST1_DROP = 13         # ~5% of 255 subtracted from yesterday
+TILE_BG_PAST2_DROP = 26         # ~10% of 255 subtracted from ≥2 days ago
+# Glyph fade for past days — date numeral + event labels dim with
+# days elapsed, on top of the wash drop. Goes monotonically deeper
+# day-by-day so the recent past reads as context, older past as
+# background. Future + today stay at full opacity (255).
+TILE_FG_PAST1 = 230             # ~90% — yesterday
+TILE_FG_PAST2 = 204             # ~80% — 2 days past
+TILE_FG_PAST3 = 179             # ~70% — 3 days past
+TILE_FG_PAST4 = 153             # ~60% — 4+ days past
 # Dashboard-only interaction: when the pong ball's centre enters one of
 # the sub-divided empty tiles, that tile's alpha is bumped briefly and
 # decays back to TILE_BG_FAINT_ALPHA. Pure visual cue for now —
@@ -1587,7 +1600,6 @@ def main():
             # days use generic mauve; empty days recede to BG. Off goes
             # first so an OFF day overrides anything overlapping.
             WASH_PRIORITY = ("Off", "ant", "Jog")
-            tomorrow_date = cur_today + _dt.timedelta(days=1)
             for d, _ds, _dxp, _dyp, tx, ty in blits_to_render:
                 evs = by_date.get(d, [])
                 wash = None
@@ -1599,13 +1611,19 @@ def main():
                         break
                 if wash is None:
                     wash = P["MAUVE"] if evs else P["BG"]
-                # Boost today, lesser boost tomorrow, so the eye lands
-                # on now → next first; the rest of the week reads as
-                # context at the baseline wash alpha.
-                if d == cur_today:
+                # Day-focus ladder: ≥2 past < yesterday < baseline <
+                # tomorrow < today. The eye lands on now → next first;
+                # past days recede into context. Date numerals and event
+                # labels stay full colour either way.
+                delta_days = (d - cur_today).days
+                if delta_days == 0:
                     a = min(255, TILE_BG_ALPHA + TILE_BG_TODAY_BOOST)
-                elif d == tomorrow_date:
+                elif delta_days == 1:
                     a = min(255, TILE_BG_ALPHA + TILE_BG_TOMORROW_BOOST)
+                elif delta_days == -1:
+                    a = max(0, TILE_BG_ALPHA - TILE_BG_PAST1_DROP)
+                elif delta_days < -1:
+                    a = max(0, TILE_BG_ALPHA - TILE_BG_PAST2_DROP)
                 else:
                     a = TILE_BG_ALPHA
                 _tile_bg_rect(surf, tx - 2 * pitch, ty,
@@ -1615,7 +1633,23 @@ def main():
             MAX_LABELS_PER_TILE = 4
             MAX_CHARS = 11        # roughly what fits at 14px bold sans
             LABEL_W_MAX = DASH_MINI_SIZE - 6
+            def _past_fg_alpha(dd):
+                if dd >= 0:
+                    return 255
+                if dd == -1:
+                    return TILE_FG_PAST1
+                if dd == -2:
+                    return TILE_FG_PAST2
+                if dd == -3:
+                    return TILE_FG_PAST3
+                return TILE_FG_PAST4
             for d, ds, dxp, dyp, tx, ty in blits_to_render:
+                # Glyph alpha applied per-surface via set_alpha — the
+                # cached surfaces are shared across tiles, so we
+                # explicitly reset to fg_alpha before every blit (set
+                # state, then blit immediately). Future + today get 255.
+                fg_alpha = _past_fg_alpha((d - cur_today).days)
+                ds.set_alpha(fg_alpha)
                 surf.blit(ds, (dxp, dyp))
                 events_today = by_date.get(d, [])
                 if not events_today:
@@ -1648,6 +1682,7 @@ def main():
                             and text_y + label.get_height()
                             > ty + DASH_MINI_SIZE):
                         break  # no room for this label
+                    label.set_alpha(fg_alpha)
                     surf.blit(
                         label,
                         (tx + (DASH_MINI_SIZE - label.get_width()) // 2,
@@ -1664,6 +1699,7 @@ def main():
                             more_raw, True, P["MUTED"])
                         event_label_cache[more_key] = more_label
                     if text_y + more_label.get_height() <= ty + DASH_MINI_SIZE:
+                        more_label.set_alpha(fg_alpha)
                         surf.blit(
                             more_label,
                             (tx + (DASH_MINI_SIZE
