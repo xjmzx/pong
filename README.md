@@ -164,9 +164,21 @@ Calendar cells render with their Google-side colour as both a 15%-alpha backdrop
 
 ## Configuration
 
-### Calendars (`~/.config/pong/calendars.json`)
+### Per-user config directory
 
-An empty template is written automatically on first launch (`chmod 600`). Edit it to add Google Calendar private-iCal URLs:
+Pong reads `calendars.json` and `theme.json` from a per-OS user config directory, which is **per-machine** (not synced across devices — each OS has its own):
+
+| OS | Path |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/pong/` or `~/.config/pong/` |
+| macOS | `~/Library/Application Support/pong/` |
+| Windows | `%APPDATA%\pong\` (e.g. `C:\Users\<you>\AppData\Roaming\pong\`) |
+
+The directory is created automatically on first launch. Each device needs its own `calendars.json` setup — there's no built-in sync.
+
+### Calendars (`calendars.json`)
+
+An empty template is written automatically on first launch (`chmod 600` on Unix). Edit it to add Google Calendar private-iCal URLs:
 
 ```json
 {
@@ -225,9 +237,11 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 
 `Ctrl+Alt+F3` (or any other unused F-key) switches to a TTY — log in there and kill or reboot. This is documented intentional bypass.
 
-## Portability across Linux devices
+## Portability across devices
 
-All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/` (which holds `calendars.json` and `theme.json`). To set up on a fresh Linux box:
+Per-user config (`calendars.json`, `theme.json`) lives in the per-OS user config directory listed above; per-machine lock state (`~/.cache/pong_lock_*`) is Linux-only and not portable.
+
+**Fresh Linux box** (full lock + dashboard):
 
 1. `git clone` the repo (or copy the source)
 2. `make deb && sudo apt install ./dist/pong_0.4.2_all.deb` — or `make deps && make install PREFIX=$HOME/.local` for a user-space install
@@ -235,7 +249,13 @@ All state and config sits under `~/.cache/pong_lock_*` and `~/.config/pong/` (wh
 4. Launch pong once to auto-create the empty `calendars.json` + `theme.json` templates
 5. Edit `~/.config/pong/calendars.json` with your ICS URLs + colours
 
-Per-machine state (`~/.cache/pong_lock_*`) is not portable; per-user config (`~/.config/pong/*`) is.
+**Fresh macOS / Windows box** (dashboard only):
+
+1. Download the `.dmg` / `.exe` from the latest GitHub release
+2. Launch once — the empty `calendars.json` + `theme.json` templates get written under the per-OS config dir above
+3. Edit `calendars.json` with your ICS URLs + colours, then relaunch
+
+Each device manages its own config; there is no built-in sync.
 
 ## Limitations
 

@@ -136,10 +136,34 @@ PAL_GRID_MAIN = (18, 19, 22)    # 4×4 main grid lines — near-black, faint
 PAL_GRID_SUB  = (12, 13, 15)    # 16×16 sub-grid — barely above bg
 PAL_KB_DIM    = (55, 60, 67)    # SPACE wake-tile Ctrl/Alt outline + label
 
+# Per-user config directory (theme.json + calendars.json). Resolved
+# per-OS so the mac/.dmg and win/.exe bundles land on their native
+# locations instead of inventing a hidden ~/.config tree.
+#   Linux:   $XDG_CONFIG_HOME/pong  or  ~/.config/pong
+#   macOS:   ~/Library/Application Support/pong
+#   Windows: %APPDATA%\pong  (falls back to ~/.config/pong if unset)
+# The dir is created on first write by the existing os.makedirs() in the
+# theme/calendar template writers.
+def _user_config_dir():
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/pong")
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return os.path.join(appdata, "pong")
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return os.path.join(xdg, "pong")
+    return os.path.expanduser("~/.config/pong")
+
+
+_USER_CONFIG_DIR = _user_config_dir()
+
+
 # Dual-theme palette — channel triples mirrored verbatim from
 # ~/code_gh/xjmzx/ndisc.smpl/src/index.css :root (fizx) and .theme-upleb.
 # Pong alternates between the two on each launch; override via
-# ~/.config/pong/theme.json {"mode": "fizx" | "upleb" | "alternate"}.
+# <user-config-dir>/theme.json {"mode": "fizx" | "upleb" | "alternate"}.
 THEMES = {
     "fizx":  {"bg":     (  9,  13,  18), "panel":  ( 13,  17,  23),
               "fg":     (240, 246, 252), "muted":  (107, 122, 141),
@@ -153,7 +177,7 @@ THEMES = {
               "alert":  (248, 113, 113)},
 }
 THEME_CACHE  = os.path.expanduser("~/.cache/pong_lock_theme")
-THEME_CONFIG = os.path.expanduser("~/.config/pong/theme.json")
+THEME_CONFIG = os.path.join(_USER_CONFIG_DIR, "theme.json")
 P = {}  # populated by main() via build_palette(_resolve_theme())
 # Up to three cities tracked in the left-column weather tile (clock view).
 # The first entry is the "primary" — it also feeds the header-strip temp
@@ -163,7 +187,7 @@ WEATHER_LOCATION = WEATHER_LOCATIONS[0]   # primary; "" for IP-based geolocation
 WEATHER_REFRESH_SEC = 1800      # 30 min between fetches
 WEATHER_TIMEOUT_SEC = 6         # fetch timeout
 EVENT_LABEL_MAX = 14            # truncate event labels to this many chars
-CALENDAR_CONFIG = os.path.expanduser("~/.config/pong/calendars.json")
+CALENDAR_CONFIG = os.path.join(_USER_CONFIG_DIR, "calendars.json")
 CALENDAR_REFRESH_SEC = 600      # 10 min between ICS fetches
 # 35-day window covers the full rolling 4-week calendar block (4 × 7
 # days = 28) plus a buffer for events near the window edges.
