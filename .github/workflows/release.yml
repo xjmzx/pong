@@ -1,7 +1,7 @@
 name: Release dashboard apps
 
 # Tag-driven releases. Push a tag like `v0.4.0` and this builds the macOS
-# dashboard .dmg (arm64 + x86_64) and the Windows .exe, then attaches them
+# dashboard .dmg (Apple Silicon) and the Windows .exe, then attaches them
 # to the GitHub Release for that tag. Also runnable manually
 # (workflow_dispatch) to dry-run the builds without cutting a release.
 on:
@@ -19,16 +19,10 @@ permissions:
 
 jobs:
   build-macos:
-    name: Build macOS .dmg (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14   # Apple Silicon
-            arch: arm64
-          - runner: macos-13   # Intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    name: Build macOS .dmg (arm64)
+    # Apple Silicon only. macos-13 (Intel) runners are scarce/deprecated;
+    # Intel Macs run pong from source or via Rosetta (see README).
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +54,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dmg-${{ matrix.arch }}
+          name: dmg-arm64
           path: dist/*.dmg
           if-no-files-found: error
 
@@ -127,10 +121,10 @@ jobs:
           body: |
             Dashboard app builds (unsigned).
 
-            **macOS** — open the `.dmg`, drag **Pong Dashboard** to Applications.
-            First launch is blocked (unsigned): right-click the app → **Open**, or run
-            `xattr -dr com.apple.quarantine "/Applications/Pong Dashboard.app"`.
-            Use `arm64` for Apple Silicon, `x86_64` for Intel Macs.
+            **macOS** (Apple Silicon) — open the `.dmg`, drag **Pong Dashboard** to
+            Applications. First launch is blocked (unsigned): right-click the app →
+            **Open**, or run `xattr -dr com.apple.quarantine "/Applications/Pong Dashboard.app"`.
+            Intel Macs: run from source or under Rosetta (see README).
 
             **Windows** — download and run the `.exe`. SmartScreen may warn on an
             unsigned app: click **More info → Run anyway**.

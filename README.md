@@ -84,7 +84,7 @@ The spec lives in [`packaging/windows/`](packaging/windows/) and shares the `--d
 
 ### Releases (CI)
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) builds all three assets (macOS arm64 + x86_64 `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed:
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds the release assets (macOS Apple-Silicon `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed. Intel Macs aren't built in CI (macos-13 runners are scarce/deprecated) — build locally with `make dmg` or run from source.
 
 ```
 git tag v0.4.0 && git push origin v0.4.0
