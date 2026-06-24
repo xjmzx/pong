@@ -135,12 +135,12 @@ The screen is divided into a 4×4 grid with the clock in the centre 2×2 and the
 │ NEXT   │                    │        │
 │ Wed... │                    │        │
 ├─TT─────┤                    ├────────┤
-│ NEXT   │       CLOCK        │        │
-│ Tue... │      (2×2 cell)    │ empty  │
-├─37°C───┤                    ├────────┤
-│ HANOI  │                    │        │
-│ 05:14  │                    │        │
-│ 18:36  │                    │        │
+│ NEXT   │       CLOCK        │ look-  │
+│ Tue... │      (2×2 cell)    │ ahead  │
+├────────┤                    ├────────┤
+│HANOI 39│                    │        │
+│EDINB 17│                    │        │
+│BEIJI 29│                    │        │
 │ wttr.in│                    │        │
 ├─host───┼──── input strip ───┼────────┤
 │ design │   (SPACE / pwd)    │        │
@@ -158,7 +158,7 @@ The screen is divided into a 4×4 grid with the clock in the centre 2×2 and the
 - (1–2, 1–2) CLOCK 2×2 — focal time digit
 - (1–2, 3) Input strip — SPACE wake-hint, password prompt, warning bar, feedback
 
-**Right column:** intentionally empty — reserved for future ambient data.
+**Right column:** mostly empty ambient space. A 3×2 **lookahead slot** is now reserved in the layout on the right flank, inline with the clock's row (mirroring the left content column), earmarked for forecast / multi-city weather content — it's reserved in `dash_content_rects` only, with no renderer wired yet, so nothing draws there today.
 
 Calendar cells render with their Google-side colour as both a 15%-alpha backdrop and the name text. The design profile line shows which theme is active and the three signature hexes (accent, mauve, auburn) that vary across themes.
 
@@ -239,7 +239,14 @@ Lockout state persists at `~/.cache/pong_lock_state` across Ctrl+C and re-launch
 
 ## Portability across devices
 
-Per-user config (`calendars.json`, `theme.json`) lives in the per-OS user config directory listed above; per-machine lock state (`~/.cache/pong_lock_*`) is Linux-only and not portable.
+Two separate trees, which currently resolve differently per OS:
+
+- **Config** (`calendars.json`, `theme.json`) — the per-OS *native* config dir listed above (macOS `~/Library/Application Support/pong`, Windows `%APPDATA%\pong`, Linux `~/.config/pong`). User-edited; per-machine, not synced.
+- **Runtime state** (locks, theme cache, crash/lifecycle log) — currently lands under **`~/.cache/`** on *every* platform, including macOS and Windows, where that's a non-native location pong creates in your home dir. None of it is portable; it's all regenerated per machine:
+  - `~/.cache/pong/crash.log` — crash + lifecycle log (all platforms)
+  - `~/.cache/pong_dash.lock` — dashboard single-instance lock (all platforms)
+  - `~/.cache/pong_lock_theme` — fizx/upleb theme-alternation cache (all platforms)
+  - `~/.cache/pong_lock.lock`, `~/.cache/pong_lock_state` — lock-mode single-instance + auth-cooloff state (**lock mode only**, i.e. Linux)
 
 **Fresh Linux box** (full lock + dashboard):
 
