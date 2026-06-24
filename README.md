@@ -69,7 +69,28 @@ open "dist/Pong Dashboard.app"   # or drag it into /Applications
 
 The bundle is self-contained (~60 MB) — Python, pygame, and the calendar libs are all inside it, so it runs on a Mac with no Python or deps installed. It launches straight into dashboard mode (lock mode is never bundled).
 
-The build is **ad-hoc signed, not notarized.** Running it locally is fine, but if you copy/zip/AirDrop it to another Mac, Gatekeeper will block the first launch — right-click → **Open** (then **Open** again in the dialog), or strip quarantine with `xattr -dr com.apple.quarantine "Pong Dashboard.app"`. The packaging spec + entry point live in [`packaging/macos/`](packaging/macos/); `PONG_DASH_SIZE=960x540` overrides the initial window size. Built on Apple Silicon the `.app` is arm64-only; run `make app` on an Intel Mac (or under Rosetta) for an x86_64 build.
+The bundle is **ad-hoc signed, not notarized.** Running it locally is fine, but if you copy/zip/AirDrop it to another Mac, Gatekeeper will block the first launch — right-click → **Open** (then **Open** again in the dialog), or strip quarantine with `xattr -dr com.apple.quarantine "Pong Dashboard.app"`. The packaging spec + entry point live in [`packaging/macos/`](packaging/macos/); `PONG_DASH_SIZE=960x540` overrides the initial window size. Built on Apple Silicon the `.app` is arm64-only; run `make app` on an Intel Mac (or under Rosetta) for an x86_64 build.
+
+### Windows (dashboard .exe)
+
+The same dashboard runs on Windows. From source: `pip install pygame icalendar recurring-ical-events` then `python pong_lock.py --dashboard`. To build a single-file **Pong Dashboard.exe** (windowed, self-contained), on a Windows machine with PyInstaller:
+
+```
+pip install pygame icalendar recurring-ical-events pyinstaller
+pyinstaller --noconfirm packaging\windows\pong-dashboard-win.spec
+```
+
+The spec lives in [`packaging/windows/`](packaging/windows/) and shares the `--dashboard` entry point with the macOS build. Unsigned, so Windows SmartScreen may warn on first run — click **More info → Run anyway**.
+
+### Releases (CI)
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds all three assets (macOS arm64 + x86_64 `.dmg`, Windows `.exe`) and attaches them to a GitHub Release when a `v*` tag is pushed:
+
+```
+git tag v0.4.0 && git push origin v0.4.0
+```
+
+The tag drives the version baked into the artifact filenames and the macOS bundle's `Info.plist`. Run the workflow manually (Actions → *Release dashboard apps* → *Run workflow*) to dry-run the builds without cutting a release.
 
 ## Run
 

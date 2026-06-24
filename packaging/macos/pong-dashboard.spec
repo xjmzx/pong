@@ -27,7 +27,7 @@ for pkg in ("icalendar", "recurring_ical_events", "pygame"):
 hiddenimports += ["pygame._sdl2", "pygame._sdl2.video"]
 
 a = Analysis(
-    [os.path.join(SPECPATH, "pong_dash_entry.py")],
+    [os.path.join(SPECPATH, "..", "pong_dash_entry.py")],
     pathex=[ROOT],                      # so `import pong_lock` resolves
     binaries=binaries,
     datas=datas,

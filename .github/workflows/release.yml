@@ -1,9 +1,9 @@
 name: Release dashboard apps
 
 # Tag-driven releases. Push a tag like `v0.4.0` and this builds the macOS
-# dashboard .dmg for both architectures and attaches them to the GitHub
-# Release for that tag. Also runnable manually (workflow_dispatch) to dry-
-# run a build without cutting a release.
+# dashboard .dmg (arm64 + x86_64) and the Windows .exe, then attaches them
+# to the GitHub Release for that tag. Also runnable manually
+# (workflow_dispatch) to dry-run the builds without cutting a release.
 on:
   push:
     tags:
@@ -64,9 +64,49 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
 
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Install deps
+        run: pip install pygame icalendar recurring-ical-events pyinstaller
+
+      - name: Build .exe
+        env:
+          PONG_VERSION: ${{ steps.ver.outputs.version }}
+        run: pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/windows/pong-dashboard-win.spec
+
+      - name: Rename with version + arch
+        shell: bash
+        run: mv "dist/Pong Dashboard.exe" "dist/PongDashboard-${{ steps.ver.outputs.version }}-windows-x64.exe"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe-windows
+          path: dist/*.exe
+          if-no-files-found: error
+
   release:
-    name: Attach DMGs to the Release
-    needs: build-macos
+    name: Attach builds to the Release
+    needs: [build-macos, build-windows]
     if: github.event_name == 'push'   # only on a real tag, not manual dry-runs
     runs-on: ubuntu-latest
     steps:
@@ -79,18 +119,18 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*.dmg
+          files: |
+            artifacts/*.dmg
+            artifacts/*.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            macOS dashboard app (unsigned, ad-hoc signed).
+            Dashboard app builds (unsigned).
 
-            **Install:** open the `.dmg`, drag **Pong Dashboard** to Applications.
-            On first launch macOS will block it (unsigned) — right-click the app
-            and choose **Open**, or run:
+            **macOS** — open the `.dmg`, drag **Pong Dashboard** to Applications.
+            First launch is blocked (unsigned): right-click the app → **Open**, or run
+            `xattr -dr com.apple.quarantine "/Applications/Pong Dashboard.app"`.
+            Use `arm64` for Apple Silicon, `x86_64` for Intel Macs.
 
-            ```
-            xattr -dr com.apple.quarantine "/Applications/Pong Dashboard.app"
-            ```
-
-            Pick the `arm64` build for Apple Silicon, `x86_64` for Intel Macs.
+            **Windows** — download and run the `.exe`. SmartScreen may warn on an
+            unsigned app: click **More info → Run anyway**.
