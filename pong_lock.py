@@ -1076,12 +1076,14 @@ def main():
     clock_r = (lat_rows - clock_rows) // 2
     dash_content_rects["clock"] = _lat_rect(
         clock_c, clock_r, clock_cols, clock_rows)
-    # Right-flank 3x2 slot inline with the clock band. Reserved for the
-    # lookahead group (forecast / multi-city / forward-looking content)
-    # tracking the macOS dashboard direction. Dashboard clock view only;
-    # no renderer wired yet.
+    # Clock-band flanks: weather (left) and lookahead (right) both inline
+    # with the clock so the two read as a vertically-aligned pair around
+    # it. Override the loop's default r4 weather slot. Dashboard clock
+    # view only; calendar view's date-strip math is independent of these
+    # rects so this override is safe.
     dash_content_rects["lookahead"] = _lat_rect(
         lat_cols - 3, clock_r, 3, 2)
+    dash_content_rects["weather"] = _lat_rect(0, clock_r, 3, 2)
 
     empty_tile_rects = []
     for r in range(lat_rows):
