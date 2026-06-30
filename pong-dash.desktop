@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Pong Dashboard
+Name=Pong Dash
 GenericName=Ambient Dashboard
 Comment=Clock, calendar, and weather dashboard with ambient pong (no lock)
 Exec=pong --dashboard
